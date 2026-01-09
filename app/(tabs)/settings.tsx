@@ -10,13 +10,12 @@ import {
   Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronRight, Globe, Volume2, Trash2, Info, Smartphone, Mic } from 'lucide-react-native';
+import { ChevronRight, Globe, Volume2, Trash2, Info, Smartphone, Mic, Wifi, WifiOff, Database } from 'lucide-react-native';
 import { useTranslation } from '@/hooks/translation-store';
 import LanguageSelector from '@/components/LanguageSelector';
-import ScreenTranslationOverlay from '@/components/ScreenTranslationOverlay';
 
 export default function SettingsScreen() {
-  const { settings, updateSettings, clearHistory, availableVoices, isScreenTranslationActive, toggleScreenTranslation } = useTranslation();
+  const { settings, updateSettings, clearHistory, availableVoices, isOnline, translationCache } = useTranslation();
   const insets = useSafeAreaInsets();
   const [showVoiceSelector, setShowVoiceSelector] = useState(false);
 
@@ -41,6 +40,55 @@ export default function SettingsScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled"
       >
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Network & Offline Mode</Text>
+          
+          <View style={styles.settingItem}>
+            <View style={styles.settingInfo}>
+              {isOnline ? <Wifi size={20} color="#34A853" /> : <WifiOff size={20} color="#EA4335" />}
+              <View>
+                <Text style={styles.settingLabel}>Network Status</Text>
+                <Text style={[styles.settingDescription, { color: isOnline ? '#34A853' : '#EA4335' }]}>
+                  {isOnline ? 'Connected' : 'Offline'}
+                </Text>
+              </View>
+            </View>
+            <View style={[styles.statusBadge, isOnline ? styles.statusOnline : styles.statusOffline]}>
+              <Text style={styles.statusText}>{isOnline ? 'Online' : 'Offline'}</Text>
+            </View>
+          </View>
+
+          <View style={styles.settingItem}>
+            <View style={styles.settingInfo}>
+              <Database size={20} color="#5F6368" />
+              <View>
+                <Text style={styles.settingLabel}>Offline Mode</Text>
+                <Text style={styles.settingDescription}>
+                  Use cached translations only
+                </Text>
+              </View>
+            </View>
+            <Switch
+              value={settings.offlineMode}
+              onValueChange={(value) => updateSettings({ offlineMode: value })}
+              trackColor={{ false: '#E8EAED', true: '#4285F4' }}
+              thumbColor="#FFFFFF"
+            />
+          </View>
+
+          <View style={styles.settingItem}>
+            <View style={styles.settingInfo}>
+              <Database size={20} color="#5F6368" />
+              <View>
+                <Text style={styles.settingLabel}>Cached Translations</Text>
+                <Text style={styles.settingDescription}>
+                  {translationCache} translations saved for offline use
+                </Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Default Languages</Text>
           
@@ -206,36 +254,6 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Screen Translation</Text>
-          
-          <View style={styles.settingItem}>
-            <View style={styles.settingInfo}>
-              <Smartphone size={20} color="#5F6368" />
-              <View>
-                <Text style={styles.settingLabel}>Screen Translator</Text>
-                <Text style={styles.settingDescription}>
-                  {isScreenTranslationActive ? 'Active - Tap to close' : 'Tap to activate overlay'}
-                </Text>
-              </View>
-            </View>
-            <TouchableOpacity
-              style={[
-                styles.screenTranslationButton,
-                isScreenTranslationActive && styles.screenTranslationButtonActive
-              ]}
-              onPress={toggleScreenTranslation}
-            >
-              <Text style={[
-                styles.screenTranslationButtonText,
-                isScreenTranslationActive && styles.screenTranslationButtonTextActive
-              ]}>
-                {isScreenTranslationActive ? 'Close' : 'Open'}
-              </Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.section}>
           <Text style={styles.sectionTitle}>Data</Text>
           
           <TouchableOpacity style={styles.settingItem} onPress={handleClearHistory}>
@@ -329,11 +347,6 @@ export default function SettingsScreen() {
           </View>
         </Modal>
       )}
-
-      <ScreenTranslationOverlay
-        visible={isScreenTranslationActive}
-        onClose={toggleScreenTranslation}
-      />
     </View>
   );
 }
@@ -426,26 +439,6 @@ const styles = StyleSheet.create({
   rateButtonTextActive: {
     color: '#FFFFFF',
   },
-  screenTranslationButton: {
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 16,
-    backgroundColor: '#F8F9FA',
-    borderWidth: 1,
-    borderColor: '#E8EAED',
-  },
-  screenTranslationButtonActive: {
-    backgroundColor: '#EA4335',
-    borderColor: '#EA4335',
-  },
-  screenTranslationButtonText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#5F6368',
-  },
-  screenTranslationButtonTextActive: {
-    color: '#FFFFFF',
-  },
   modalOverlay: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.5)',
@@ -524,5 +517,20 @@ const styles = StyleSheet.create({
     color: '#9AA0A6',
     textAlign: 'center',
     lineHeight: 18,
+  },
+  statusBadge: {
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 12,
+  },
+  statusOnline: {
+    backgroundColor: '#E8F5E9',
+  },
+  statusOffline: {
+    backgroundColor: '#FFEBEE',
+  },
+  statusText: {
+    fontSize: 12,
+    fontWeight: '600',
   },
 });

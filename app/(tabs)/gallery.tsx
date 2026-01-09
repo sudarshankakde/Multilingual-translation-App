@@ -7,6 +7,7 @@ import {
   ScrollView,
   ActivityIndicator,
   Platform,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Images, Upload, Camera } from 'lucide-react-native';
@@ -14,50 +15,41 @@ import * as ImagePicker from 'expo-image-picker';
 import { useTranslation } from '@/hooks/translation-store';
 import TranslationCard from '@/components/TranslationCard';
 import LanguageSelector from '@/components/LanguageSelector';
+import OfflineScreen from '@/components/OfflineScreen';
+import { extractTextFromImageBase64 } from '@/utils/gemini';
 
 export default function GalleryScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastTranslation, setLastTranslation] = useState<any>(null);
-  const { settings, translateText, addTranslation, updateSettings } = useTranslation();
+  const { settings, translateText, addTranslation, updateSettings, isOffline } = useTranslation();
   const insets = useSafeAreaInsets();
 
-  const extractTextFromImage = async (imageUri: string): Promise<string> => {
-    try {
-      const response = await fetch('https://toolkit.rork.com/text/llm/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [
-            {
-              role: 'system',
-              content: 'Extract all text from this image. Return only the extracted text, nothing else. If no text is found, return "No text found".'
-            },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  image: imageUri
-                }
-              ]
-            }
-          ]
-        }),
-      });
+  if (isOffline) {
+    return <OfflineScreen message="Gallery translation requires an internet connection to extract and translate text from images." />;
+  }
 
-      const data = await response.json();
-      return data.completion || 'No text found';
-    } catch (error) {
-      console.error('Text extraction failed:', error);
-      throw new Error('Failed to extract text from image');
-    }
+  const extractTextFromImage = async (imageUri: string): Promise<string> => {
+    let base64Data = imageUri;
+    if (imageUri.includes('base64,')) base64Data = imageUri.split('base64,')[1];
+    else if (imageUri.includes(',')) base64Data = imageUri.split(',')[1];
+    const result = await extractTextFromImageBase64(base64Data);
+    console.log(`Gemini used model: ${result.modelTried} attempts:${result.attempts}`);
+    return result.text;
   };
 
   const processImage = async (imageUri: string) => {
     if (settings.targetLanguage === 'auto') {
       console.log('Error: Please select a target language');
+      return;
+    }
+
+    // Check if offline before attempting image processing
+    if (isOffline) {
+      Alert.alert(
+        'Offline Mode',
+        'Gallery translation requires an internet connection to extract and translate text from images. This feature is not available in offline mode.',
+        [{ text: 'OK' }]
+      );
       return;
     }
 
@@ -94,6 +86,15 @@ export default function GalleryScreen() {
   };
 
   const pickImageFromGallery = async () => {
+    if (isOffline) {
+      Alert.alert(
+        'Offline Mode',
+        'Gallery translation requires an internet connection. This feature is not available in offline mode.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
@@ -113,6 +114,16 @@ export default function GalleryScreen() {
   };
 
   const takePhoto = async () => {
+    // Check if offline before attempting to take photo
+    if (isOffline) {
+      Alert.alert(
+        'Offline Mode',
+        'Camera translation requires an internet connection. This feature is not available in offline mode.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
@@ -176,16 +187,18 @@ export default function GalleryScreen() {
               Choose an existing image from your photo library
             </Text>
             <TouchableOpacity
-              style={[styles.actionButton, (isProcessing || settings.targetLanguage === 'auto') && styles.actionButtonDisabled]}
+              style={[styles.actionButton, (isProcessing || settings.targetLanguage === 'auto' || isOffline) && styles.actionButtonDisabled]}
               onPress={pickImageFromGallery}
-              disabled={isProcessing || settings.targetLanguage === 'auto'}
+              disabled={isProcessing || settings.targetLanguage === 'auto' || isOffline}
             >
               {isProcessing ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
                   <Upload size={20} color="#FFFFFF" />
-                  <Text style={styles.actionButtonText}>Select Image</Text>
+                  <Text style={styles.actionButtonText}>
+                    {isOffline ? 'Offline - Unavailable' : 'Select Image'}
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
@@ -201,16 +214,18 @@ export default function GalleryScreen() {
                 Capture a new photo with text to translate
               </Text>
               <TouchableOpacity
-                style={[styles.actionButton, styles.actionButtonSecondary, (isProcessing || settings.targetLanguage === 'auto') && styles.actionButtonDisabled]}
+                style={[styles.actionButton, styles.actionButtonSecondary, (isProcessing || settings.targetLanguage === 'auto' || isOffline) && styles.actionButtonDisabled]}
                 onPress={takePhoto}
-                disabled={isProcessing || settings.targetLanguage === 'auto'}
+                disabled={isProcessing || settings.targetLanguage === 'auto' || isOffline}
               >
                 {isProcessing ? (
                   <ActivityIndicator color="#FFFFFF" />
                 ) : (
                   <>
                     <Camera size={20} color="#FFFFFF" />
-                    <Text style={styles.actionButtonText}>Take Photo</Text>
+                    <Text style={styles.actionButtonText}>
+                      {isOffline ? 'Offline - Unavailable' : 'Take Photo'}
+                    </Text>
                   </>
                 )}
               </TouchableOpacity>
@@ -218,10 +233,18 @@ export default function GalleryScreen() {
           )}
         </View>
 
-        {settings.targetLanguage === 'auto' && (
+        {settings.targetLanguage === 'auto' && !isOffline && (
           <View style={styles.warningSection}>
             <Text style={styles.warningText}>
               Please select a target language above to enable translation
+            </Text>
+          </View>
+        )}
+        
+        {isOffline && (
+          <View style={[styles.warningSection, styles.offlineWarning]}>
+            <Text style={[styles.warningText, styles.offlineWarningText]}>
+              📡 Gallery translation is not available in offline mode
             </Text>
           </View>
         )}
@@ -434,5 +457,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#5F6368',
     lineHeight: 20,
+  },
+  offlineWarning: {
+    backgroundColor: '#FEE',
+  },
+  offlineWarningText: {
+    color: '#EA4335',
+    fontWeight: '500',
   },
 });

@@ -16,49 +16,33 @@ import * as FileSystem from 'expo-file-system';
 import { useTranslation } from '@/hooks/translation-store';
 import TranslationCard from '@/components/TranslationCard';
 import LanguageSelector from '@/components/LanguageSelector';
+import OfflineScreen from '@/components/OfflineScreen';
+import { extractTextFromPdfBase64 } from '@/utils/gemini';
 
 export default function PDFScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [extractedText, setExtractedText] = useState('');
   const [lastTranslation, setLastTranslation] = useState<any>(null);
-  const { settings, translateText, addTranslation, updateSettings } = useTranslation();
+  const { settings, translateText, addTranslation, updateSettings, isOffline } = useTranslation();
   const insets = useSafeAreaInsets();
 
-  const extractTextFromPDF = async (base64Data: string): Promise<string> => {
-    try {
-      const response = await fetch('https://toolkit.rork.com/text/llm/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [
-            {
-              role: 'system',
-              content: 'Extract all text content from this PDF document. Return only the extracted text, preserving the original formatting as much as possible. If no text is found, return "No text found".'
-            },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  image: base64Data
-                }
-              ]
-            }
-          ]
-        }),
-      });
+  if (isOffline) {
+    return <OfflineScreen message="PDF translation requires an internet connection to extract and translate text from documents." />;
+  }
 
-      const data = await response.json();
-      return data.completion || 'No text found';
-    } catch (error) {
-      console.error('PDF text extraction failed:', error);
-      throw new Error('Failed to extract text from PDF');
-    }
-  };
+  // Removed local Gemini fetch; now using centralized helper with fallback logic
 
   const pickAndProcessPDF = async () => {
+    // Check if offline before attempting upload
+    if (isOffline) {
+      Alert.alert(
+        'Offline Mode',
+        'PDF translation requires an internet connection. This feature is not available in offline mode.',
+        [{ text: 'OK' }]
+      );
+      return;
+    }
+
     try {
       const result = await DocumentPicker.getDocumentAsync({
         type: 'application/pdf',
@@ -70,8 +54,33 @@ export default function PDFScreen() {
       const asset = result.assets[0];
       if (!asset) return;
 
+      // Check file size (warn if > 5MB)
+      const fileSize = asset.size || 0;
+      if (fileSize > 5 * 1024 * 1024) {
+        Alert.alert(
+          'Large File Warning',
+          `This PDF is ${(fileSize / (1024 * 1024)).toFixed(1)}MB. Large files may take longer to process or fail. Continue anyway?`,
+          [
+            { text: 'Cancel', style: 'cancel', onPress: () => {} },
+            { text: 'Continue', onPress: () => processPDFFile(asset) }
+          ]
+        );
+        return;
+      }
+
+      await processPDFFile(asset);
+    } catch (error) {
+      console.error('PDF processing failed:', error);
+      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to process PDF');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const processPDFFile = async (asset: any) => {
+    try {
       setIsProcessing(true);
-      console.log('Processing PDF:', asset.name);
+      console.log('Processing PDF:', asset.name, 'Size:', asset.size);
 
       let base64Data: string;
       
@@ -117,13 +126,37 @@ export default function PDFScreen() {
         }
       }
 
-      console.log('Extracting text from PDF...');
-      const text = await extractTextFromPDF(base64Data);
-      
-      if (text === 'No text found' || !text.trim()) {
-        Alert.alert('No Text Found', 'No text was detected in the PDF document.');
+      console.log('Extracting text from PDF via helper...');
+      let text: string;
+      try {
+        let rawBase64 = base64Data;
+        if (rawBase64.includes('base64,')) rawBase64 = rawBase64.split('base64,')[1];
+        else if (rawBase64.includes(',')) rawBase64 = rawBase64.split(',')[1];
+        const result = await extractTextFromPdfBase64(rawBase64);
+        console.log(`Gemini used model: ${result.modelTried} attempts:${result.attempts}`);
+        text = result.text;
+      } catch (extractError) {
+        console.error('Extraction error:', extractError);
+        Alert.alert(
+          'Extraction Failed',
+          extractError instanceof Error ? extractError.message : 'Could not extract text from PDF. The file may be encrypted, corrupted, or contain only images without text layers.',
+          [{ text: 'OK' }]
+        );
+        setIsProcessing(false);
         return;
       }
+      
+      if (text === 'No text found' || !text.trim()) {
+        Alert.alert(
+          'No Text Found',
+          'No readable text was detected in the PDF document. The PDF may contain only images or scanned pages without text layers.',
+          [{ text: 'OK' }]
+        );
+        setIsProcessing(false);
+        return;
+      }
+      
+      console.log(`Successfully extracted ${text.length} characters`);
 
       setExtractedText(text);
 
@@ -146,18 +179,25 @@ export default function PDFScreen() {
       } else {
         Alert.alert('Success', 'Text extracted successfully. Please select a target language to translate.');
       }
-
     } catch (error) {
-      console.error('PDF processing failed:', error);
-      Alert.alert('Error', error instanceof Error ? error.message : 'Failed to process PDF');
-    } finally {
-      setIsProcessing(false);
+      console.error('PDF processing in helper failed:', error);
+      throw error;
     }
   };
 
   const translateExtractedText = async () => {
     if (!extractedText || settings.targetLanguage === 'auto') {
       console.log('Error: Please select a target language');
+      return;
+    }
+
+    // Check if offline before attempting translation
+    if (isOffline) {
+      Alert.alert(
+        'Offline Mode',
+        'PDF translation requires an internet connection. This feature is not available in offline mode.',
+        [{ text: 'OK' }]
+      );
       return;
     }
 
@@ -231,19 +271,29 @@ export default function PDFScreen() {
           </Text>
 
           <TouchableOpacity
-            style={[styles.uploadButton, isProcessing && styles.uploadButtonDisabled]}
+            style={[styles.uploadButton, (isProcessing || isOffline) && styles.uploadButtonDisabled]}
             onPress={pickAndProcessPDF}
-            disabled={isProcessing}
+            disabled={isProcessing || isOffline}
           >
             {isProcessing ? (
               <ActivityIndicator color="#FFFFFF" />
             ) : (
               <>
                 <Upload size={20} color="#FFFFFF" />
-                <Text style={styles.uploadButtonText}>Select PDF</Text>
+                <Text style={styles.uploadButtonText}>
+                  {isOffline ? 'Offline - Unavailable' : 'Select PDF'}
+                </Text>
               </>
             )}
           </TouchableOpacity>
+
+          {isOffline && (
+            <View style={styles.offlineBanner}>
+              <Text style={styles.offlineBannerText}>
+                📡 PDF translation is not available offline
+              </Text>
+            </View>
+          )}
         </View>
 
         {extractedText && !lastTranslation && (
@@ -513,5 +563,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#5F6368',
     lineHeight: 20,
+  },
+  offlineBanner: {
+    backgroundColor: '#FEF7E0',
+    borderRadius: 8,
+    padding: 12,
+    marginTop: 16,
+  },
+  offlineBannerText: {
+    fontSize: 13,
+    color: '#F9AB00',
+    textAlign: 'center',
+    fontWeight: '500',
   },
 });

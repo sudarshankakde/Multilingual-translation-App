@@ -5,7 +5,6 @@ import React, { useEffect } from "react";
 import { View, StyleSheet } from "react-native";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { TranslationProvider } from "@/hooks/translation-store";
-import FloatingTranslationButton from "@/components/FloatingTranslationButton";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -16,9 +15,7 @@ function RootLayoutNav() {
     <View style={styles.container}>
       <Stack screenOptions={{ headerBackTitle: "Back" }}>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="modal" options={{ presentation: "modal" }} />
       </Stack>
-      <FloatingTranslationButton />
     </View>
   );
 }

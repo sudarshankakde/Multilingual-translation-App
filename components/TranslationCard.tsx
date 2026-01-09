@@ -5,13 +5,13 @@ import {
   TouchableOpacity,
   StyleSheet,
   Platform,
+  Animated,
 } from 'react-native';
-import { Copy, Volume2, Share2 } from 'lucide-react-native';
-import * as Clipboard from 'expo-clipboard';
-import * as Speech from 'expo-speech';
-import * as Sharing from 'expo-sharing';
+import { Copy, Volume2, Share2, VolumeX, Check, Pause, Play, Square } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { Translation } from '@/types/translation';
 import { getLanguageName } from '@/constants/languages';
+import { useTranslation } from '@/hooks/translation-store';
 
 interface TranslationCardProps {
   translation: Translation;
@@ -22,72 +22,79 @@ export default function TranslationCard({
   translation, 
   showLanguages = true 
 }: TranslationCardProps) {
-  const [isSpeaking, setIsSpeaking] = useState(false);
+  const { speakText, stopSpeech, pauseSpeech, resumeSpeech, copyToClipboard, shareTranslation, isSpeaking, currentSpeakingText } = useTranslation();
+  const [copiedText, setCopiedText] = useState<string>('');
+  const [isPaused, setIsPaused] = useState(false);
+  const scaleAnim = useState(new Animated.Value(1))[0];
 
-  const handleCopy = async (text: string) => {
-    try {
-      await Clipboard.setStringAsync(text);
-      console.log('Text copied to clipboard');
-    } catch (error) {
-      console.error('Failed to copy text:', error);
+  const isThisTextSpeaking = currentSpeakingText === translation.originalText || currentSpeakingText === translation.translatedText;
+
+  const animateButton = () => {
+    Animated.sequence([
+      Animated.timing(scaleAnim, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start();
+  };
+
+  const handleCopy = async (text: string, type: 'original' | 'translated') => {
+    animateButton();
+    const success = await copyToClipboard(text);
+    if (success) {
+      setCopiedText(type);
+      setTimeout(() => setCopiedText(''), 2000);
     }
   };
 
   const handleSpeak = async (text: string, language: string) => {
-    if (Platform.OS === 'web') {
-      console.log('Text-to-speech is not available on web');
-      return;
+    animateButton();
+    if (isThisTextSpeaking && isSpeaking && !isPaused) {
+      // Stop if currently speaking this text
+      await stopSpeech();
+      setIsPaused(false);
+    } else {
+      // Start speaking
+      setIsPaused(false);
+      await speakText(text, language);
     }
+  };
 
-    try {
-      if (isSpeaking) {
-        Speech.stop();
-        setIsSpeaking(false);
-        return;
-      }
-
-      setIsSpeaking(true);
-      await Speech.speak(text, {
-        language: language === 'auto' ? 'en' : language,
-        rate: 0.8,
-        onDone: () => setIsSpeaking(false),
-        onError: () => setIsSpeaking(false),
-      });
-    } catch (error) {
-      console.error('Failed to speak text:', error);
-      setIsSpeaking(false);
+  const handlePause = async () => {
+    animateButton();
+    if (isPaused) {
+      await resumeSpeech();
+      setIsPaused(false);
+    } else {
+      await pauseSpeech();
+      setIsPaused(true);
     }
+  };
+
+  const handleStop = async () => {
+    animateButton();
+    await stopSpeech();
+    setIsPaused(false);
   };
 
   const handleShare = async () => {
-    try {
-      const shareText = `Original: ${translation.originalText}\n\nTranslation: ${translation.translatedText}`;
-      
-      if (Platform.OS === 'web') {
-        if (typeof navigator !== 'undefined' && navigator.share) {
-          await navigator.share({
-            title: 'Translation',
-            text: shareText,
-          });
-        } else {
-          await Clipboard.setStringAsync(shareText);
-          console.log('Translation copied to clipboard');
-        }
-      } else {
-        if (await Sharing.isAvailableAsync()) {
-          await Sharing.shareAsync(shareText);
-        } else {
-          await Clipboard.setStringAsync(shareText);
-          console.log('Translation copied to clipboard');
-        }
-      }
-    } catch (error) {
-      console.error('Failed to share translation:', error);
-    }
+    animateButton();
+    await shareTranslation(
+      translation.originalText,
+      translation.translatedText,
+      getLanguageName(translation.sourceLanguage),
+      getLanguageName(translation.targetLanguage)
+    );
   };
 
   return (
-    <View style={styles.container}>
+    <Animated.View style={[styles.container, { transform: [{ scale: scaleAnim }] }]}>
       {showLanguages && (
         <View style={styles.languageHeader}>
           <Text style={styles.languageText}>
@@ -104,16 +111,24 @@ export default function TranslationCard({
           <Text style={styles.originalText}>{translation.originalText}</Text>
           <View style={styles.actionButtons}>
             <TouchableOpacity
-              onPress={() => handleCopy(translation.originalText)}
+              onPress={() => handleCopy(translation.originalText, 'original')}
               style={styles.actionButton}
             >
-              <Copy size={16} color="#5F6368" />
+              {copiedText === 'original' ? (
+                <Check size={16} color="#34A853" />
+              ) : (
+                <Copy size={16} color="#5F6368" />
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => handleSpeak(translation.originalText, translation.sourceLanguage)}
-              style={styles.actionButton}
+              style={[styles.actionButton, isThisTextSpeaking && currentSpeakingText === translation.originalText && styles.actionButtonActive]}
             >
-              <Volume2 size={16} color={isSpeaking ? "#4285F4" : "#5F6368"} />
+              {isThisTextSpeaking && currentSpeakingText === translation.originalText && isSpeaking ? (
+                <VolumeX size={16} color="#4285F4" />
+              ) : (
+                <Volume2 size={16} color={isThisTextSpeaking && currentSpeakingText === translation.originalText ? "#4285F4" : "#5F6368"} />
+              )}
             </TouchableOpacity>
           </View>
         </View>
@@ -124,17 +139,45 @@ export default function TranslationCard({
           <Text style={styles.translatedText}>{translation.translatedText}</Text>
           <View style={styles.actionButtons}>
             <TouchableOpacity
-              onPress={() => handleCopy(translation.translatedText)}
+              onPress={() => handleCopy(translation.translatedText, 'translated')}
               style={styles.actionButton}
             >
-              <Copy size={16} color="#5F6368" />
+              {copiedText === 'translated' ? (
+                <Check size={16} color="#34A853" />
+              ) : (
+                <Copy size={16} color="#5F6368" />
+              )}
             </TouchableOpacity>
             <TouchableOpacity
               onPress={() => handleSpeak(translation.translatedText, translation.targetLanguage)}
-              style={styles.actionButton}
+              style={[styles.actionButton, isThisTextSpeaking && currentSpeakingText === translation.translatedText && styles.actionButtonActive]}
             >
-              <Volume2 size={16} color="#5F6368" />
+              {isThisTextSpeaking && currentSpeakingText === translation.translatedText && isSpeaking ? (
+                <VolumeX size={16} color="#4285F4" />
+              ) : (
+                <Volume2 size={16} color={isThisTextSpeaking && currentSpeakingText === translation.translatedText ? "#4285F4" : "#5F6368"} />
+              )}
             </TouchableOpacity>
+            {isThisTextSpeaking && isSpeaking && (
+              <TouchableOpacity
+                onPress={handlePause}
+                style={styles.actionButton}
+              >
+                {isPaused ? (
+                  <Play size={16} color="#4285F4" />
+                ) : (
+                  <Pause size={16} color="#4285F4" />
+                )}
+              </TouchableOpacity>
+            )}
+            {isThisTextSpeaking && (
+              <TouchableOpacity
+                onPress={handleStop}
+                style={styles.actionButton}
+              >
+                <Square size={16} color="#EA4335" />
+              </TouchableOpacity>
+            )}
             <TouchableOpacity
               onPress={handleShare}
               style={styles.actionButton}
@@ -144,7 +187,7 @@ export default function TranslationCard({
           </View>
         </View>
       </View>
-    </View>
+    </Animated.View>
   );
 }
 
@@ -211,6 +254,10 @@ const styles = StyleSheet.create({
   actionButton: {
     padding: 8,
     marginLeft: 4,
+    borderRadius: 20,
+  },
+  actionButtonActive: {
+    backgroundColor: '#E3F2FD',
   },
   divider: {
     height: 1,

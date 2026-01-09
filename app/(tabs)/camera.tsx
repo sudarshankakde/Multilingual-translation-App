@@ -14,8 +14,10 @@ import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
 import { Camera, FlipHorizontal, Zap, ZapOff, Images, Settings } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTranslation } from '@/hooks/translation-store';
+import { extractTextFromImageBase64 } from '@/utils/gemini';
 import TranslationCard from '@/components/TranslationCard';
 import LanguageSelector from '@/components/LanguageSelector';
+import OfflineScreen from '@/components/OfflineScreen';
 
 export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
@@ -25,7 +27,7 @@ export default function CameraScreen() {
   const [showSettings, setShowSettings] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
-  const { settings, translateText, addTranslation, updateSettings } = useTranslation();
+  const { settings, translateText, addTranslation, updateSettings, isOffline } = useTranslation();
 
   if (!permission) {
     return <View style={styles.container} />;
@@ -48,6 +50,10 @@ export default function CameraScreen() {
     );
   }
 
+  if (isOffline) {
+    return <OfflineScreen message="Camera translation requires an internet connection to extract and translate text from images." />;
+  }
+
   const toggleCameraFacing = () => {
     setFacing(current => (current === 'back' ? 'front' : 'back'));
   };
@@ -57,42 +63,28 @@ export default function CameraScreen() {
   };
 
   const extractTextFromImage = async (imageUri: string): Promise<string> => {
-    try {
-      const response = await fetch('https://toolkit.rork.com/text/llm/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          messages: [
-            {
-              role: 'system',
-              content: 'Extract all text from this image. Return only the extracted text, nothing else. If no text is found, return "No text found".'
-            },
-            {
-              role: 'user',
-              content: [
-                {
-                  type: 'image',
-                  image: imageUri
-                }
-              ]
-            }
-          ]
-        }),
-      });
-
-      const data = await response.json();
-      return data.completion || 'No text found';
-    } catch (error) {
-      console.error('Text extraction failed:', error);
-      throw new Error('Failed to extract text from image');
-    }
+    // Strip data URL prefix to raw base64
+    let base64Data = imageUri;
+    if (imageUri.includes('base64,')) base64Data = imageUri.split('base64,')[1];
+    else if (imageUri.includes(',')) base64Data = imageUri.split(',')[1];
+    const result = await extractTextFromImageBase64(base64Data);
+    console.log(`Gemini used model: ${result.modelTried} attempts:${result.attempts}`);
+    return result.text;
   };
 
   const processImage = async (imageUri: string) => {
     if (settings.targetLanguage === 'auto') {
       console.log('Error: Please select a target language');
+      return;
+    }
+
+    // Check if offline before attempting image processing
+    if (isOffline) {
+      Alert.alert(
+        'Offline Mode',
+        'Camera translation requires an internet connection to extract and translate text from images. This feature is not available in offline mode.',
+        [{ text: 'OK' }]
+      );
       return;
     }
 
@@ -206,23 +198,31 @@ export default function CameraScreen() {
             </View>
 
             <TouchableOpacity 
-              style={[styles.webButton, settings.targetLanguage === 'auto' && styles.webButtonDisabled]} 
+              style={[styles.webButton, (settings.targetLanguage === 'auto' || isOffline) && styles.webButtonDisabled]} 
               onPress={pickImage}
-              disabled={isProcessing}
+              disabled={isProcessing || isOffline}
             >
               {isProcessing ? (
                 <ActivityIndicator color="#FFFFFF" />
               ) : (
                 <>
                   <Images size={20} color="#FFFFFF" />
-                  <Text style={styles.webButtonText}>Select Image from Gallery</Text>
+                  <Text style={styles.webButtonText}>
+                    {isOffline ? 'Offline - Unavailable' : 'Select Image from Gallery'}
+                  </Text>
                 </>
               )}
             </TouchableOpacity>
             
-            {settings.targetLanguage === 'auto' && (
+            {settings.targetLanguage === 'auto' && !isOffline && (
               <Text style={styles.webWarningText}>
                 Please select a target language above
+              </Text>
+            )}
+            
+            {isOffline && (
+              <Text style={styles.webWarningText}>
+                📡 Camera translation is not available in offline mode
               </Text>
             )}
             
@@ -297,10 +297,18 @@ export default function CameraScreen() {
           </TouchableOpacity>
         </View>
         
-        {settings.targetLanguage === 'auto' && (
+        {settings.targetLanguage === 'auto' && !isOffline && (
           <View style={styles.warningBanner}>
             <Text style={styles.warningBannerText}>
               Please select a target language to enable translation
+            </Text>
+          </View>
+        )}
+        
+        {isOffline && (
+          <View style={[styles.warningBanner, styles.offlineBanner]}>
+            <Text style={[styles.warningBannerText, styles.offlineBannerText]}>
+              📡 Camera translation is not available in offline mode
             </Text>
           </View>
         )}
@@ -339,8 +347,8 @@ export default function CameraScreen() {
               
               <TouchableOpacity
                 onPress={takePicture}
-                style={[styles.captureButton, (isProcessing || settings.targetLanguage === 'auto') && styles.captureButtonDisabled]}
-                disabled={isProcessing || settings.targetLanguage === 'auto'}
+                style={[styles.captureButton, (isProcessing || settings.targetLanguage === 'auto' || isOffline) && styles.captureButtonDisabled]}
+                disabled={isProcessing || settings.targetLanguage === 'auto' || isOffline}
               >
                 {isProcessing ? (
                   <ActivityIndicator color="#FFFFFF" />
@@ -693,5 +701,11 @@ const styles = StyleSheet.create({
     maxHeight: 250,
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  offlineBanner: {
+    backgroundColor: '#FEE',
+  },
+  offlineBannerText: {
+    color: '#EA4335',
   },
 });

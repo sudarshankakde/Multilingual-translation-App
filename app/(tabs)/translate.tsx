@@ -9,33 +9,71 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
+  Animated,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ArrowRightLeft, Trash2 } from 'lucide-react-native';
+import { ArrowRightLeft, Trash2, Wifi, WifiOff, Copy, Share2, Volume2, VolumeX, Check, Play, Pause } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import LanguageSelector from '@/components/LanguageSelector';
 import TranslationCard from '@/components/TranslationCard';
 import { useTranslation } from '@/hooks/translation-store';
+import OfflineScreen from '@/components/OfflineScreen';
 
 export default function TranslateScreen() {
   const [inputText, setInputText] = useState('');
   const [translatedText, setTranslatedText] = useState('');
-  const { settings, updateSettings, translateText, addTranslation, isLoading } = useTranslation();
+  const [copied, setCopied] = useState<'input' | 'output' | null>(null);
+  const buttonScale = useState(new Animated.Value(1))[0];
+  const resultOpacity = useState(new Animated.Value(0))[0];
+  const { settings, updateSettings, translateText, addTranslation, isLoading, isOnline, copyToClipboard, shareTranslation, speakText, stopSpeech, isSpeaking, currentSpeakingText, isOffline } = useTranslation();
   const insets = useSafeAreaInsets();
+
+  if (isOffline) {
+    return <OfflineScreen message="Text translation requires an internet connection to translate text between languages." />;
+  }
+
+  const animateButton = (callback: () => void) => {
+    Animated.sequence([
+      Animated.timing(buttonScale, {
+        toValue: 0.95,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+      Animated.timing(buttonScale, {
+        toValue: 1,
+        duration: 100,
+        useNativeDriver: true,
+      }),
+    ]).start(callback);
+  };
 
   const handleTranslate = async () => {
     if (!inputText.trim()) {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       console.log('Error: Please enter text to translate');
       return;
     }
 
     if (settings.targetLanguage === 'auto') {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       console.log('Error: Please select a target language');
       return;
     }
 
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+
     try {
       const result = await translateText(inputText, settings.sourceLanguage, settings.targetLanguage);
       setTranslatedText(result);
+      
+      // Animate result appearance
+      Animated.timing(resultOpacity, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      }).start();
+
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
       addTranslation({
         originalText: inputText,
@@ -45,12 +83,15 @@ export default function TranslateScreen() {
         type: 'text',
       });
     } catch (error) {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       console.error('Translation error:', error instanceof Error ? error.message : 'Translation failed');
     }
   };
 
-  const handleSwapLanguages = () => {
+  const handleSwapLanguages = async () => {
     if (settings.sourceLanguage === 'auto') return;
+    
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     
     updateSettings({
       sourceLanguage: settings.targetLanguage,
@@ -63,9 +104,39 @@ export default function TranslateScreen() {
     }
   };
 
-  const handleClear = () => {
+  const handleClear = async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setInputText('');
     setTranslatedText('');
+    resultOpacity.setValue(0);
+  };
+
+  const handleCopy = async (text: string, type: 'input' | 'output') => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const success = await copyToClipboard(text);
+    if (success) {
+      setCopied(type);
+      setTimeout(() => setCopied(null), 2000);
+    }
+  };
+
+  const handleShare = async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    await shareTranslation(
+      inputText,
+      translatedText,
+      settings.sourceLanguage,
+      settings.targetLanguage
+    );
+  };
+
+  const handleSpeak = async (text: string, language: string) => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (isSpeaking && currentSpeakingText === text) {
+      await stopSpeech();
+    } else {
+      await speakText(text, language);
+    }
   };
 
   return (
@@ -76,6 +147,12 @@ export default function TranslateScreen() {
       >
         <View style={styles.header}>
           <Text style={styles.title}>Translate</Text>
+          {!isOnline && (
+            <View style={styles.offlineBadge}>
+              <WifiOff size={14} color="#EA4335" />
+              <Text style={styles.offlineText}>Offline Mode</Text>
+            </View>
+          )}
         </View>
 
         <ScrollView 
@@ -122,40 +199,98 @@ export default function TranslateScreen() {
           />
           
           <View style={styles.inputActions}>
-            <Text style={styles.charCount}>{inputText.length}/5000</Text>
+            <View style={styles.leftActions}>
+              <Text style={styles.charCount}>{inputText.length}/5000</Text>
+              {inputText.length > 0 && (
+                <>
+                  <TouchableOpacity 
+                    onPress={() => handleCopy(inputText, 'input')} 
+                    style={styles.inputActionButton}
+                  >
+                    {copied === 'input' ? (
+                      <Check size={16} color="#34A853" />
+                    ) : (
+                      <Copy size={16} color="#9AA0A6" />
+                    )}
+                  </TouchableOpacity>
+                  {Platform.OS !== 'web' && (
+                    <TouchableOpacity 
+                      onPress={() => handleSpeak(inputText, settings.sourceLanguage)} 
+                      style={styles.inputActionButton}
+                    >
+                      {isSpeaking && currentSpeakingText === inputText ? (
+                        <VolumeX size={16} color="#4285F4" />
+                      ) : (
+                        <Volume2 size={16} color="#9AA0A6" />
+                      )}
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+            </View>
             <TouchableOpacity onPress={handleClear} style={styles.clearButton}>
               <Trash2 size={16} color="#9AA0A6" />
             </TouchableOpacity>
           </View>
         </View>
 
-        <TouchableOpacity
-          style={[styles.translateButton, (!inputText.trim() || isLoading) && styles.translateButtonDisabled]}
-          onPress={handleTranslate}
-          disabled={!inputText.trim() || isLoading}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#FFFFFF" />
-          ) : (
-            <Text style={styles.translateButtonText}>Translate</Text>
-          )}
-        </TouchableOpacity>
+        <Animated.View style={{ transform: [{ scale: buttonScale }] }}>
+          <TouchableOpacity
+            style={[styles.translateButton, (!inputText.trim() || isLoading) && styles.translateButtonDisabled]}
+            onPress={() => animateButton(handleTranslate)}
+            disabled={!inputText.trim() || isLoading}
+            activeOpacity={0.8}
+          >
+            {isLoading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator color="#FFFFFF" size="small" />
+                <Text style={styles.translateButtonText}>Translating...</Text>
+              </View>
+            ) : (
+              <Text style={styles.translateButtonText}>Translate</Text>
+            )}
+          </TouchableOpacity>
+        </Animated.View>
 
         {translatedText && (
-          <View style={styles.resultContainer}>
-            <TranslationCard
-              translation={{
-                id: 'current',
-                originalText: inputText,
-                translatedText: translatedText,
-                sourceLanguage: settings.sourceLanguage,
-                targetLanguage: settings.targetLanguage,
-                timestamp: Date.now(),
-                type: 'text',
-              }}
-              showLanguages={false}
-            />
-          </View>
+          <Animated.View style={[styles.resultContainer, { opacity: resultOpacity }]}>
+            <View style={styles.resultHeader}>
+              <Text style={styles.resultLabel}>Translation</Text>
+              <View style={styles.resultActions}>
+                <TouchableOpacity 
+                  onPress={() => handleCopy(translatedText, 'output')} 
+                  style={styles.resultActionButton}
+                >
+                  {copied === 'output' ? (
+                    <Check size={18} color="#34A853" />
+                  ) : (
+                    <Copy size={18} color="#5F6368" />
+                  )}
+                </TouchableOpacity>
+                {Platform.OS !== 'web' && (
+                  <TouchableOpacity 
+                    onPress={() => handleSpeak(translatedText, settings.targetLanguage)} 
+                    style={styles.resultActionButton}
+                  >
+                    {isSpeaking && currentSpeakingText === translatedText ? (
+                      <VolumeX size={18} color="#4285F4" />
+                    ) : (
+                      <Volume2 size={18} color="#5F6368" />
+                    )}
+                  </TouchableOpacity>
+                )}
+                <TouchableOpacity 
+                  onPress={handleShare} 
+                  style={styles.resultActionButton}
+                >
+                  <Share2 size={18} color="#5F6368" />
+                </TouchableOpacity>
+              </View>
+            </View>
+            <View style={styles.resultContent}>
+              <Text style={styles.resultText}>{translatedText}</Text>
+            </View>
+          </Animated.View>
         )}
         </ScrollView>
       </KeyboardAvoidingView>
@@ -184,11 +319,28 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFFFFF',
     borderBottomWidth: 1,
     borderBottomColor: '#E8EAED',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   title: {
     fontSize: 24,
     fontWeight: '600',
     color: '#202124',
+  },
+  offlineBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#FFEBEE',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 16,
+    gap: 6,
+  },
+  offlineText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#EA4335',
   },
   languageSelector: {
     flexDirection: 'row',
@@ -248,9 +400,17 @@ const styles = StyleSheet.create({
     paddingHorizontal: 16,
     paddingBottom: 12,
   },
+  leftActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
   charCount: {
     fontSize: 12,
     color: '#9AA0A6',
+  },
+  inputActionButton: {
+    padding: 4,
   },
   clearButton: {
     padding: 4,
@@ -280,8 +440,59 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
   },
+  loadingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
   resultContainer: {
     marginTop: 16,
     marginHorizontal: 16,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#E8EAED',
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  resultHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#E8EAED',
+  },
+  resultLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#4285F4',
+    textTransform: 'uppercase',
+    letterSpacing: 0.5,
+  },
+  resultActions: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  resultActionButton: {
+    padding: 8,
+    borderRadius: 20,
+    backgroundColor: '#F8F9FA',
+  },
+  resultContent: {
+    padding: 16,
+  },
+  resultText: {
+    fontSize: 18,
+    color: '#202124',
+    fontWeight: '500',
+    lineHeight: 28,
   },
 });

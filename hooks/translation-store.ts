@@ -1,12 +1,16 @@
 import createContextHook from '@nkzw/create-context-hook';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { Platform } from 'react-native';
+import { Platform, Share } from 'react-native';
 import * as Speech from 'expo-speech';
+import * as Clipboard from 'expo-clipboard';
+import * as Haptics from 'expo-haptics';
+import NetInfo from '@react-native-community/netinfo';
 import { Translation, TTSVoice, TTSSettings } from '@/types/translation';
 
 const STORAGE_KEY = 'translation_history';
 const SETTINGS_KEY = 'translation_settings';
+const TRANSLATION_CACHE_KEY = 'translation_cache';
 
 interface TranslationSettings {
   sourceLanguage: string;
@@ -14,7 +18,16 @@ interface TranslationSettings {
   autoSpeak: boolean;
   speechRate: number;
   ttsSettings: TTSSettings;
-  screenTranslationEnabled: boolean;
+  offlineMode: boolean; // User preference for offline mode
+}
+
+interface TranslationCacheEntry {
+  key: string; // hash of text + source + target
+  originalText: string;
+  translatedText: string;
+  sourceLanguage: string;
+  targetLanguage: string;
+  timestamp: number;
 }
 
 const defaultSettings: TranslationSettings = {
@@ -28,7 +41,7 @@ const defaultSettings: TranslationSettings = {
     rate: 1.0,
     volume: 1.0,
   },
-  screenTranslationEnabled: false,
+  offlineMode: false,
 };
 
 export const [TranslationProvider, useTranslation] = createContextHook(() => {
@@ -36,7 +49,10 @@ export const [TranslationProvider, useTranslation] = createContextHook(() => {
   const [settings, setSettings] = useState<TranslationSettings>(defaultSettings);
   const [isLoading, setIsLoading] = useState(false);
   const [availableVoices, setAvailableVoices] = useState<TTSVoice[]>([]);
-  const [isScreenTranslationActive, setIsScreenTranslationActive] = useState(false);
+  const [isOnline, setIsOnline] = useState(true);
+  const [translationCache, setTranslationCache] = useState<Map<string, TranslationCacheEntry>>(new Map());
+  const [isSpeaking, setIsSpeaking] = useState(false);
+  const [currentSpeakingText, setCurrentSpeakingText] = useState<string>('');
 
   const loadHistory = async () => {
     try {
@@ -47,6 +63,30 @@ export const [TranslationProvider, useTranslation] = createContextHook(() => {
       }
     } catch (error) {
       console.error('Failed to load translation history:', error);
+    }
+  };
+
+  const loadTranslationCache = async () => {
+    try {
+      const stored = await AsyncStorage.getItem(TRANSLATION_CACHE_KEY);
+      if (stored) {
+        const cacheArray: TranslationCacheEntry[] = JSON.parse(stored);
+        const cacheMap = new Map(cacheArray.map(entry => [entry.key, entry]));
+        setTranslationCache(cacheMap);
+      }
+    } catch (error) {
+      console.error('Failed to load translation cache:', error);
+    }
+  };
+
+  const saveTranslationCache = async (cache: Map<string, TranslationCacheEntry>) => {
+    try {
+      const cacheArray = Array.from(cache.values());
+      // Keep only the most recent 1000 translations
+      const limitedCache = cacheArray.slice(0, 1000);
+      await AsyncStorage.setItem(TRANSLATION_CACHE_KEY, JSON.stringify(limitedCache));
+    } catch (error) {
+      console.error('Failed to save translation cache:', error);
     }
   };
 
@@ -132,6 +172,17 @@ export const [TranslationProvider, useTranslation] = createContextHook(() => {
     loadHistory();
     loadSettings();
     loadAvailableVoices();
+    loadTranslationCache();
+    
+    // Monitor network connectivity
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOnline(state.isConnected ?? false);
+      console.log(`📡 Network status: ${state.isConnected ? 'Online' : 'Offline'}`);
+    });
+
+    return () => {
+      unsubscribe();
+    };
   }, [loadAvailableVoices]);
 
   const speakText = useCallback(async (text: string, language?: string) => {
@@ -141,10 +192,29 @@ export const [TranslationProvider, useTranslation] = createContextHook(() => {
     }
 
     try {
+      // Haptic feedback
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      
       const options: Speech.SpeechOptions = {
         rate: settings.ttsSettings.rate,
         pitch: settings.ttsSettings.pitch,
         volume: settings.ttsSettings.volume,
+        onStart: () => {
+          setIsSpeaking(true);
+          setCurrentSpeakingText(text);
+        },
+        onDone: () => {
+          setIsSpeaking(false);
+          setCurrentSpeakingText('');
+        },
+        onStopped: () => {
+          setIsSpeaking(false);
+          setCurrentSpeakingText('');
+        },
+        onError: () => {
+          setIsSpeaking(false);
+          setCurrentSpeakingText('');
+        },
       };
 
       if (settings.ttsSettings.voice) {
@@ -156,17 +226,140 @@ export const [TranslationProvider, useTranslation] = createContextHook(() => {
       await Speech.speak(text, options);
     } catch (error) {
       console.error('TTS failed:', error);
+      setIsSpeaking(false);
+      setCurrentSpeakingText('');
     }
   }, [settings.ttsSettings]);
 
-  const toggleScreenTranslation = useCallback(() => {
-    setIsScreenTranslationActive(prev => !prev);
+  const pauseSpeech = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await Speech.pause();
+      setIsSpeaking(false);
+    } catch (error) {
+      console.error('Pause TTS failed:', error);
+    }
   }, []);
+
+  const resumeSpeech = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      await Speech.resume();
+      setIsSpeaking(true);
+    } catch (error) {
+      console.error('Resume TTS failed:', error);
+    }
+  }, []);
+
+  const stopSpeech = useCallback(async () => {
+    if (Platform.OS === 'web') return;
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      await Speech.stop();
+      setIsSpeaking(false);
+      setCurrentSpeakingText('');
+    } catch (error) {
+      console.error('Stop TTS failed:', error);
+    }
+  }, []);
+
+  const copyToClipboard = useCallback(async (text: string) => {
+    try {
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      await Clipboard.setStringAsync(text);
+      console.log('✅ Copied to clipboard');
+      return true;
+    } catch (error) {
+      console.error('Copy failed:', error);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return false;
+    }
+  }, []);
+
+  const shareTranslation = useCallback(async (originalText: string, translatedText: string, sourceLang: string, targetLang: string) => {
+    try {
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const message = `${originalText}\n\n→ ${translatedText}\n\n(${sourceLang} → ${targetLang})`;
+      
+      const result = await Share.share({
+        message,
+        title: 'Translation',
+      });
+
+      if (result.action === Share.sharedAction) {
+        console.log('✅ Translation shared');
+        await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        return true;
+      }
+      return false;
+    } catch (error) {
+      console.error('Share failed:', error);
+      await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return false;
+    }
+  }, []);
+
+  // Generate cache key for a translation
+  const getCacheKey = (text: string, sourceLang: string, targetLang: string): string => {
+    return `${sourceLang}:${targetLang}:${text.toLowerCase().trim()}`;
+  };
+
+  // Get translation from cache
+  const getCachedTranslation = (text: string, sourceLang: string, targetLang: string): string | null => {
+    const key = getCacheKey(text, sourceLang, targetLang);
+    const cached = translationCache.get(key);
+    if (cached) {
+      console.log('✅ Using cached translation');
+      return cached.translatedText;
+    }
+    return null;
+  };
+
+  // Add translation to cache
+  const addToCache = (text: string, translatedText: string, sourceLang: string, targetLang: string) => {
+    const key = getCacheKey(text, sourceLang, targetLang);
+    const entry: TranslationCacheEntry = {
+      key,
+      originalText: text,
+      translatedText,
+      sourceLanguage: sourceLang,
+      targetLanguage: targetLang,
+      timestamp: Date.now(),
+    };
+    
+    const newCache = new Map(translationCache);
+    newCache.set(key, entry);
+    setTranslationCache(newCache);
+    saveTranslationCache(newCache);
+  };
 
   const translateText = useCallback(async (text: string, sourceLanguage: string, targetLanguage: string): Promise<string> => {
     setIsLoading(true);
     try {
-      // Check if we have internet connectivity
+      // First, check cache
+      const cached = getCachedTranslation(text, sourceLanguage, targetLanguage);
+      
+      // If offline mode is enabled or no internet, use cache only
+      if (settings.offlineMode || !isOnline) {
+        if (cached) {
+          setIsLoading(false);
+          return cached;
+        } else {
+          setIsLoading(false);
+          throw new Error('No cached translation available. Please connect to the internet for new translations.');
+        }
+      }
+
+      // If we have cached result and we're online, use it while attempting to refresh in background
+      if (cached && isOnline) {
+        // Return cached immediately for better UX
+        setIsLoading(false);
+        return cached;
+      }
+
+      // Try online translation
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
       
@@ -199,6 +392,9 @@ export const [TranslationProvider, useTranslation] = createContextHook(() => {
       const data = await response.json();
       const translatedText = data.completion || text;
       
+      // Cache the translation for offline use
+      addToCache(text, translatedText, sourceLanguage, targetLanguage);
+      
       if (settings.autoSpeak && translatedText !== text) {
         await speakText(translatedText, targetLanguage);
       }
@@ -206,23 +402,42 @@ export const [TranslationProvider, useTranslation] = createContextHook(() => {
       return translatedText;
     } catch (error) {
       console.error('Translation failed:', error);
-      throw new Error('Translation failed. Please check your internet connection.');
+      
+      // If online translation fails, try cache as fallback
+      const cached = getCachedTranslation(text, sourceLanguage, targetLanguage);
+      if (cached) {
+        console.log('⚠️ Online translation failed, using cached version');
+        return cached;
+      }
+      
+      throw new Error('Translation failed. Please check your internet connection or try again later.');
     } finally {
       setIsLoading(false);
     }
-  }, [settings.autoSpeak, speakText]);
+  }, [settings.autoSpeak, settings.offlineMode, isOnline, translationCache, speakText]);
+
+  // Compute effective offline state (user preference OR no network)
+  const isOffline = useMemo(() => settings.offlineMode || !isOnline, [settings.offlineMode, isOnline]);
 
   return useMemo(() => ({
     history,
     settings,
     isLoading,
     availableVoices,
-    isScreenTranslationActive,
+    isOnline,
+    isOffline,
+    translationCache: translationCache.size,
+    isSpeaking,
+    currentSpeakingText,
     addTranslation,
     clearHistory,
     updateSettings,
     translateText,
     speakText,
-    toggleScreenTranslation,
-  }), [history, settings, isLoading, availableVoices, isScreenTranslationActive, addTranslation, clearHistory, updateSettings, translateText, speakText, toggleScreenTranslation]);
+    pauseSpeech,
+    resumeSpeech,
+    stopSpeech,
+    copyToClipboard,
+    shareTranslation,
+  }), [history, settings, isLoading, availableVoices, isOnline, isOffline, translationCache, isSpeaking, currentSpeakingText, addTranslation, clearHistory, updateSettings, translateText, speakText, pauseSpeech, resumeSpeech, stopSpeech, copyToClipboard, shareTranslation]);
 });

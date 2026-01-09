@@ -6,9 +6,12 @@ import {
   TouchableOpacity,
   StyleSheet,
   TextInput,
+  Animated,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Search, Trash2, Filter } from 'lucide-react-native';
+import * as Haptics from 'expo-haptics';
 import { useTranslation } from '@/hooks/translation-store';
 import TranslationCard from '@/components/TranslationCard';
 import { Translation } from '@/types/translation';
@@ -29,9 +32,28 @@ export default function HistoryScreen() {
     return matchesSearch && matchesFilter;
   });
 
-  const handleClearHistory = () => {
-    console.log('Clearing translation history');
-    clearHistory();
+  const handleClearHistory = async () => {
+    await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    
+    Alert.alert(
+      'Clear History',
+      `Are you sure you want to delete all ${history.length} translations? This action cannot be undone.`,
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+          onPress: () => Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light),
+        },
+        {
+          text: 'Clear All',
+          style: 'destructive',
+          onPress: async () => {
+            await Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+            clearHistory();
+          },
+        },
+      ]
+    );
   };
 
   const renderFilterButton = (type: typeof filterType, label: string) => (
@@ -40,7 +62,10 @@ export default function HistoryScreen() {
         styles.filterButton,
         filterType === type && styles.filterButtonActive
       ]}
-      onPress={() => setFilterType(type)}
+      onPress={async () => {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        setFilterType(type);
+      }}
     >
       <Text style={[
         styles.filterButtonText,
