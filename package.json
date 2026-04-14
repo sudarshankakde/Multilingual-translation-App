@@ -8,13 +8,16 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "prebuild": "expo prebuild",
+    "build": "eas build --platform android",
+    "build:ios": "eas build --platform ios",
+    "build:all": "eas build --platform all",
     "clean": "expo start --clear"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
     "@nkzw/create-context-hook": "^1.1.0",
     "@react-native-async-storage/async-storage": "^2.2.0",
-    "@react-native-community/netinfo": "^12.0.1",
+    "@react-native-community/netinfo": "11.4.1",
     "@react-navigation/native": "^7.1.6",
     "@stardazed/streams-text-encoding": "^1.0.2",
     "@tanstack/react-query": "^5.87.1",
@@ -55,6 +58,7 @@
   },
   "devDependencies": {
     "@babel/core": "^7.29.0",
+    "eas-cli": "^16.24.1",
     "@expo/ngrok": "^4.1.0",
     "@types/react": "~19.1.0",
     "eslint": "^9.31.0",

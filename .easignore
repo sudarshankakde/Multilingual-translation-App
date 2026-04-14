@@ -1,0 +1,31 @@
+# Dependencies
+node_modules/
+
+# Expo and local tooling
+.expo/
+.vscode/
+
+# Android build outputs
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+
+# Generic build artifacts
+build/
+dist/
+web-build/
+coverage/
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.orig
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# OS files
+.DS_Store
+Thumbs.db
