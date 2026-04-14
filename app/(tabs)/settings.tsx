@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import {
   View,
   Text,
@@ -6,18 +6,18 @@ import {
   StyleSheet,
   ScrollView,
   Switch,
-  Platform,
-  Modal,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ChevronRight, Globe, Volume2, Trash2, Info, Smartphone, Mic, Wifi, WifiOff, Database } from 'lucide-react-native';
+import { ChevronRight, Globe, Volume2, Trash2, Info, Wifi, WifiOff, Database } from 'lucide-react-native';
 import { useTranslation } from '@/hooks/translation-store';
 import LanguageSelector from '@/components/LanguageSelector';
 
+const appVersion: string = require('../../package.json').version;
+
 export default function SettingsScreen() {
-  const { settings, updateSettings, clearHistory, availableVoices, isOnline, translationCache } = useTranslation();
+  const { settings, updateSettings, clearHistory, isOnline, translationCache } = useTranslation();
   const insets = useSafeAreaInsets();
-  const [showVoiceSelector, setShowVoiceSelector] = useState(false);
 
   const handleClearHistory = () => {
     console.log('Clearing translation history');
@@ -25,7 +25,11 @@ export default function SettingsScreen() {
   };
 
   const showAbout = () => {
-    console.log('About Translation App - Version 1.0.0 - Built with React Native and Expo');
+    Alert.alert(
+      'About App',
+      `Translation App\nVersion ${appVersion}\nA multilingual translation app for text, image, and PDF translation.`,
+      [{ text: 'OK' }]
+    );
   };
 
   return (
@@ -168,24 +172,6 @@ export default function SettingsScreen() {
             </View>
           </View>
 
-          {Platform.OS !== 'web' && (
-            <TouchableOpacity 
-              style={styles.settingItem} 
-              onPress={() => setShowVoiceSelector(true)}
-            >
-              <View style={styles.settingInfo}>
-                <Mic size={20} color="#5F6368" />
-                <View>
-                  <Text style={styles.settingLabel}>Voice Selection</Text>
-                  <Text style={styles.settingDescription}>
-                    {availableVoices.find(v => v.identifier === settings.ttsSettings.voice)?.name || 'Default Voice'}
-                  </Text>
-                </View>
-              </View>
-              <ChevronRight size={20} color="#9AA0A6" />
-            </TouchableOpacity>
-          )}
-
           <View style={styles.settingItem}>
             <View style={styles.settingInfo}>
               <Volume2 size={20} color="#5F6368" />
@@ -281,7 +267,7 @@ export default function SettingsScreen() {
               <View>
                 <Text style={styles.settingLabel}>About App</Text>
                 <Text style={styles.settingDescription}>
-                  Version and app information
+                  Version {appVersion} and app information
                 </Text>
               </View>
             </View>
@@ -290,63 +276,9 @@ export default function SettingsScreen() {
         </View>
 
         <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Translation App v1.0.0
-          </Text>
-          <Text style={styles.footerText}>
-            Built with React Native & Expo
-          </Text>
+          <Text style={styles.footerText}>Translation App v{appVersion}</Text>
         </View>
       </ScrollView>
-
-      {Platform.OS !== 'web' && (
-        <Modal
-          visible={showVoiceSelector}
-          transparent
-          animationType="slide"
-          onRequestClose={() => setShowVoiceSelector(false)}
-        >
-          <View style={styles.modalOverlay}>
-            <View style={styles.modalContent}>
-              <Text style={styles.modalTitle}>Select Voice</Text>
-              <ScrollView style={styles.voiceList}>
-                {availableVoices.map((voice) => (
-                  <TouchableOpacity
-                    key={voice.identifier}
-                    style={[
-                      styles.voiceItem,
-                      settings.ttsSettings.voice === voice.identifier && styles.voiceItemActive
-                    ]}
-                    onPress={() => {
-                      updateSettings({
-                        ttsSettings: {
-                          ...settings.ttsSettings,
-                          voice: voice.identifier,
-                        }
-                      });
-                      setShowVoiceSelector(false);
-                    }}
-                  >
-                    <View>
-                      <Text style={styles.voiceName}>{voice.name}</Text>
-                      <Text style={styles.voiceLanguage}>{voice.language} • {voice.quality}</Text>
-                    </View>
-                    {settings.ttsSettings.voice === voice.identifier && (
-                      <View style={styles.voiceSelected} />
-                    )}
-                  </TouchableOpacity>
-                ))}
-              </ScrollView>
-              <TouchableOpacity
-                style={styles.modalCloseButton}
-                onPress={() => setShowVoiceSelector(false)}
-              >
-                <Text style={styles.modalCloseText}>Close</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        </Modal>
-      )}
     </View>
   );
 }
@@ -482,6 +414,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '500',
     color: '#202124',
+  },
+  voiceTextWrap: {
+    flex: 1,
+    paddingRight: 12,
   },
   voiceLanguage: {
     fontSize: 14,

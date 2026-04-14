@@ -17,6 +17,7 @@ interface LanguageSelectorProps {
   onLanguageSelect: (languageCode: string) => void;
   placeholder?: string;
   excludeAuto?: boolean;
+  disabled?: boolean;
 }
 
 export default function LanguageSelector({
@@ -24,6 +25,7 @@ export default function LanguageSelector({
   onLanguageSelect,
   placeholder = "Select Language",
   excludeAuto = false,
+  disabled = false,
 }: LanguageSelectorProps) {
   const [isVisible, setIsVisible] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
@@ -48,14 +50,18 @@ export default function LanguageSelector({
   return (
     <>
       <TouchableOpacity
-        style={styles.selector}
-        onPress={() => setIsVisible(true)}
+        style={[styles.selector, disabled && styles.selectorDisabled]}
+        onPress={() => {
+          if (disabled) return;
+          setIsVisible(true);
+        }}
+        disabled={disabled}
         testID="language-selector"
       >
         <Text style={styles.selectedText} numberOfLines={1}>
           {selectedLang ? selectedLang.name : placeholder}
         </Text>
-        <ChevronDown size={20} color="#5F6368" />
+        <ChevronDown size={20} color={disabled ? '#C1C7CD' : '#5F6368'} />
       </TouchableOpacity>
 
       <Modal
@@ -123,6 +129,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#E8EAED',
     minWidth: 120,
+  },
+  selectorDisabled: {
+    opacity: 0.65,
   },
   selectedText: {
     fontSize: 16,

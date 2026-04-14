@@ -9,22 +9,24 @@ import {
   Platform,
   ActivityIndicator,
   ScrollView,
+  Modal,
 } from 'react-native';
 import { CameraView, CameraType, useCameraPermissions } from 'expo-camera';
-import { Camera, FlipHorizontal, Zap, ZapOff, Images, Settings } from 'lucide-react-native';
+import { Camera, FlipHorizontal, Zap, ZapOff, Images, Languages, X } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTranslation } from '@/hooks/translation-store';
 import { extractTextFromImageBase64 } from '@/utils/gemini';
 import TranslationCard from '@/components/TranslationCard';
 import LanguageSelector from '@/components/LanguageSelector';
 import OfflineScreen from '@/components/OfflineScreen';
+import { getLanguageName } from '@/constants/languages';
 
 export default function CameraScreen() {
   const [facing, setFacing] = useState<CameraType>('back');
   const [flash, setFlash] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [lastTranslation, setLastTranslation] = useState<any>(null);
-  const [showSettings, setShowSettings] = useState(false);
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
   const [permission, requestPermission] = useCameraPermissions();
   const cameraRef = useRef<CameraView>(null);
   const { settings, translateText, addTranslation, updateSettings, isOffline } = useTranslation();
@@ -141,7 +143,7 @@ export default function CameraScreen() {
 
   const pickImage = async () => {
     if (settings.targetLanguage === 'auto') {
-      setShowSettings(true);
+      console.log('Error: Please select a target language');
       return;
     }
 
@@ -149,7 +151,7 @@ export default function CameraScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [4, 3],
+    
         quality: 0.8,
         base64: true,
       });
@@ -163,9 +165,81 @@ export default function CameraScreen() {
     }
   };
 
+  const retranslateWithNewLanguage = async (newTargetLanguage: string) => {
+    if (isProcessing || !lastTranslation || newTargetLanguage === lastTranslation.targetLanguage) {
+      return;
+    }
+
+    updateSettings({ targetLanguage: newTargetLanguage });
+    setIsProcessing(true);
+
+    try {
+      const translatedText = await translateText(
+        lastTranslation.originalText,
+        lastTranslation.sourceLanguage,
+        newTargetLanguage
+      );
+
+      const updatedTranslation = {
+        ...lastTranslation,
+        translatedText,
+        targetLanguage: newTargetLanguage,
+        timestamp: Date.now(),
+      };
+
+      setLastTranslation(updatedTranslation);
+      addTranslation({
+        originalText: lastTranslation.originalText,
+        translatedText,
+        sourceLanguage: lastTranslation.sourceLanguage,
+        targetLanguage: newTargetLanguage,
+        type: 'camera',
+      });
+    } catch (error) {
+      console.error('Retranslation error:', error instanceof Error ? error.message : 'Retranslation failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   if (Platform.OS === 'web') {
     return (
       <SafeAreaView style={styles.container}>
+        <Modal
+          visible={settingsModalVisible}
+          transparent
+          animationType="slide"
+          onRequestClose={() => setSettingsModalVisible(false)}
+        >
+          <View style={styles.modalOverlay}>
+            <View style={styles.modalCard}>
+              <View style={styles.modalHeader}>
+                <Text style={styles.modalTitle}>Translation Settings</Text>
+                <TouchableOpacity onPress={() => setSettingsModalVisible(false)} style={styles.modalCloseButton}>
+                  <X size={20} color="#5F6368" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.modalLanguageSection}>
+                <Text style={styles.modalLanguageLabel}>From</Text>
+                <LanguageSelector
+                  selectedLanguage={settings.sourceLanguage}
+                  onLanguageSelect={(code) => updateSettings({ sourceLanguage: code })}
+                  placeholder="Auto-detect"
+                />
+              </View>
+              <View style={styles.modalLanguageSection}>
+                <Text style={styles.modalLanguageLabel}>To</Text>
+                <LanguageSelector
+                  selectedLanguage={settings.targetLanguage}
+                  onLanguageSelect={(code) => updateSettings({ targetLanguage: code })}
+                  placeholder="Select language"
+                  excludeAuto
+                />
+              </View>
+            </View>
+          </View>
+        </Modal>
+
         <ScrollView style={styles.webScrollView} showsVerticalScrollIndicator={false}>
           <View style={styles.webContainer}>
             <Camera size={64} color="#9AA0A6" />
@@ -174,27 +248,23 @@ export default function CameraScreen() {
               Camera features are limited on web. Use gallery to select and translate images.
             </Text>
             
-            <View style={styles.webLanguageSection}>
-              <Text style={styles.webLanguageTitle}>Translation Settings</Text>
-              <View style={styles.webLanguageRow}>
-                <View style={styles.webLanguageItem}>
-                  <Text style={styles.webLanguageLabel}>From</Text>
-                  <LanguageSelector
-                    selectedLanguage={settings.sourceLanguage}
-                    onLanguageSelect={(code) => updateSettings({ sourceLanguage: code })}
-                    placeholder="Auto-detect"
-                  />
+            <View style={styles.webLanguageSummaryWrap}>
+              <TouchableOpacity style={styles.webSettingsIconButton} onPress={() => setSettingsModalVisible(true)}>
+                <Languages size={20} color="#4285F4" />
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.languageSummarySection} onPress={() => setSettingsModalVisible(true)} activeOpacity={0.85}>
+                <View style={styles.languageBadge}>
+                  <Text style={styles.languageBadgeLabel}>From</Text>
+                  <Text style={styles.languageBadgeValue}>{getLanguageName(settings.sourceLanguage)}</Text>
                 </View>
-                <View style={styles.webLanguageItem}>
-                  <Text style={styles.webLanguageLabel}>To</Text>
-                  <LanguageSelector
-                    selectedLanguage={settings.targetLanguage}
-                    onLanguageSelect={(code) => updateSettings({ targetLanguage: code })}
-                    placeholder="Select language"
-                    excludeAuto
-                  />
+                <View style={styles.languageArrowWrap}>
+                  <Text style={styles.languageArrow}>→</Text>
                 </View>
-              </View>
+                <View style={styles.languageBadge}>
+                  <Text style={styles.languageBadgeLabel}>To</Text>
+                  <Text style={styles.languageBadgeValue}>{getLanguageName(settings.targetLanguage)}</Text>
+                </View>
+              </TouchableOpacity>
             </View>
 
             <TouchableOpacity 
@@ -247,44 +317,40 @@ export default function CameraScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {showSettings && (
-        <View style={styles.settingsOverlay}>
-          <View style={styles.settingsModal}>
-            <View style={styles.settingsHeader}>
-              <Text style={styles.settingsTitle}>Translation Settings</Text>
-              <TouchableOpacity onPress={() => setShowSettings(false)} style={styles.closeButton}>
-                <Text style={styles.closeButtonText}>×</Text>
+      <Modal
+        visible={settingsModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSettingsModalVisible(false)}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Translation Settings</Text>
+              <TouchableOpacity onPress={() => setSettingsModalVisible(false)} style={styles.modalCloseButton}>
+                <X size={20} color="#5F6368" />
               </TouchableOpacity>
             </View>
-            
-            <View style={styles.settingsContent}>
-              <View style={styles.settingsRow}>
-                <Text style={styles.settingsLabel}>From</Text>
-                <LanguageSelector
-                  selectedLanguage={settings.sourceLanguage}
-                  onLanguageSelect={(code) => updateSettings({ sourceLanguage: code })}
-                  placeholder="Auto-detect"
-                />
-              </View>
-              
-              <View style={styles.settingsRow}>
-                <Text style={styles.settingsLabel}>To</Text>
-                <LanguageSelector
-                  selectedLanguage={settings.targetLanguage}
-                  onLanguageSelect={(code) => {
-                    updateSettings({ targetLanguage: code });
-                    if (code !== 'auto') {
-                      setShowSettings(false);
-                    }
-                  }}
-                  placeholder="Select language"
-                  excludeAuto
-                />
-              </View>
+            <View style={styles.modalLanguageSection}>
+              <Text style={styles.modalLanguageLabel}>From</Text>
+              <LanguageSelector
+                selectedLanguage={settings.sourceLanguage}
+                onLanguageSelect={(code) => updateSettings({ sourceLanguage: code })}
+                placeholder="Auto-detect"
+              />
+            </View>
+            <View style={styles.modalLanguageSection}>
+              <Text style={styles.modalLanguageLabel}>To</Text>
+              <LanguageSelector
+                selectedLanguage={settings.targetLanguage}
+                onLanguageSelect={(code) => updateSettings({ targetLanguage: code })}
+                placeholder="Select language"
+                excludeAuto
+              />
             </View>
           </View>
         </View>
-      )}
+      </Modal>
 
       <View style={styles.header}>
         <View style={styles.headerContent}>
@@ -292,10 +358,24 @@ export default function CameraScreen() {
             <Text style={styles.title}>Camera Translate</Text>
             <Text style={styles.subtitle}>Point camera at text to translate</Text>
           </View>
-          <TouchableOpacity onPress={() => setShowSettings(true)} style={styles.settingsButton}>
-            <Settings size={24} color="#4285F4" />
+          <TouchableOpacity style={styles.settingsIconButton} onPress={() => setSettingsModalVisible(true)}>
+            <Languages size={20} color="#4285F4" />
           </TouchableOpacity>
         </View>
+
+        <TouchableOpacity style={styles.languageSummarySection} onPress={() => setSettingsModalVisible(true)} activeOpacity={0.85}>
+          <View style={styles.languageBadge}>
+            <Text style={styles.languageBadgeLabel}>From</Text>
+            <Text style={styles.languageBadgeValue}>{getLanguageName(settings.sourceLanguage)}</Text>
+          </View>
+          <View style={styles.languageArrowWrap}>
+            <Text style={styles.languageArrow}>→</Text>
+          </View>
+          <View style={styles.languageBadge}>
+            <Text style={styles.languageBadgeLabel}>To</Text>
+            <Text style={styles.languageBadgeValue}>{getLanguageName(settings.targetLanguage)}</Text>
+          </View>
+        </TouchableOpacity>
         
         {settings.targetLanguage === 'auto' && !isOffline && (
           <View style={styles.warningBanner}>
@@ -365,6 +445,15 @@ export default function CameraScreen() {
 
       {lastTranslation && (
         <ScrollView style={styles.resultContainer} showsVerticalScrollIndicator={false}>
+          <View style={styles.resultLanguageSection}>
+            <Text style={styles.resultLanguageLabel}>Change Output Language</Text>
+            <LanguageSelector
+              selectedLanguage={lastTranslation.targetLanguage}
+              onLanguageSelect={retranslateWithNewLanguage}
+              placeholder="Select language"
+              excludeAuto
+            />
+          </View>
           <TranslationCard translation={lastTranslation} />
         </ScrollView>
       )}
@@ -451,6 +540,21 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
     elevation: 3,
   },
+  webLanguageSummaryWrap: {
+    width: '100%',
+    maxWidth: 400,
+    marginVertical: 20,
+    gap: 10,
+  },
+  webSettingsIconButton: {
+    alignSelf: 'flex-end',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E8F0FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   webLanguageTitle: {
     fontSize: 16,
     fontWeight: '600',
@@ -512,10 +616,86 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
   },
-  settingsButton: {
-    padding: 8,
+  settingsIconButton: {
+    width: 40,
+    height: 40,
     borderRadius: 20,
-    backgroundColor: '#F8F9FA',
+    backgroundColor: '#E8F0FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  languageSummarySection: {
+    marginTop: 12,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  languageBadge: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E8EAED',
+  },
+  languageBadgeLabel: {
+    fontSize: 11,
+    color: '#5F6368',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  languageBadgeValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#202124',
+  },
+  languageArrowWrap: {
+    width: 22,
+    alignItems: 'center',
+  },
+  languageArrow: {
+    fontSize: 16,
+    color: '#5F6368',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
+    gap: 16,
+  },
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#202124',
+  },
+  modalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F3F4',
+  },
+  modalLanguageSection: {
+    gap: 8,
+  },
+  modalLanguageLabel: {
+    fontSize: 14,
+    color: '#5F6368',
+    fontWeight: '500',
   },
   warningBanner: {
     backgroundColor: '#FEF7E0',
@@ -528,61 +708,6 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#F9AB00',
     textAlign: 'center',
-  },
-  settingsOverlay: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.5)',
-    zIndex: 1000,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  settingsModal: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 16,
-    margin: 20,
-    maxWidth: 400,
-    width: '90%',
-  },
-  settingsHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: '#E8EAED',
-  },
-  settingsTitle: {
-    fontSize: 18,
-    fontWeight: '600',
-    color: '#202124',
-  },
-  closeButton: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: '#F8F9FA',
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  closeButtonText: {
-    fontSize: 20,
-    color: '#5F6368',
-  },
-  settingsContent: {
-    padding: 20,
-    gap: 20,
-  },
-  settingsRow: {
-    gap: 8,
-  },
-  settingsLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#5F6368',
   },
   title: {
     fontSize: 24,
@@ -701,6 +826,18 @@ const styles = StyleSheet.create({
     maxHeight: 250,
     paddingHorizontal: 16,
     paddingVertical: 8,
+  },
+  resultLanguageSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 8,
+    gap: 6,
+  },
+  resultLanguageLabel: {
+    fontSize: 12,
+    color: '#5F6368',
+    fontWeight: '500',
   },
   offlineBanner: {
     backgroundColor: '#FEE',

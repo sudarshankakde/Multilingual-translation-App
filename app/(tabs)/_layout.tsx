@@ -1,18 +1,31 @@
 import { Tabs } from "expo-router";
-import { Camera, FileText, Home, History, Settings, Images } from "lucide-react-native";
+import {  FileText, Home, History, Settings, Images, BookA, BookAIcon } from "lucide-react-native";
 import React from "react";
+import { useWindowDimensions } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 export default function TabLayout() {
+  const insets = useSafeAreaInsets();
+  const { height: viewportHeight } = useWindowDimensions();
+  const tabBarHeight = 64 + insets.bottom;
+  const appContentHeight = Math.max(0, viewportHeight - insets.top - tabBarHeight);
+
   return (
     <Tabs
       screenOptions={{
         tabBarActiveTintColor: "#4285F4", 
         tabBarInactiveTintColor: "#9AA0A6",
         headerShown: false,
+        sceneStyle: {
+          height: appContentHeight,
+        },
         tabBarStyle: {
           backgroundColor: "#FFFFFF",
           borderTopWidth: 1,
           borderTopColor: "#E8EAED",
+          height: tabBarHeight,
+          paddingBottom: insets.bottom,
+          paddingTop: 8,
         },
         tabBarLabelStyle: {
           fontSize: 12,
@@ -25,14 +38,7 @@ export default function TabLayout() {
         name="translate"
         options={{
           title: "Translate",
-          tabBarIcon: ({ color, size }) => <Home color={color} size={size} />,
-        }}
-      />
-      <Tabs.Screen
-        name="camera"
-        options={{
-          title: "Camera",
-          tabBarIcon: ({ color, size }) => <Camera color={color} size={size} />,
+          tabBarIcon: ({ color, size }) => <BookAIcon color={color} size={size} />,
         }}
       />
       <Tabs.Screen
@@ -61,6 +67,12 @@ export default function TabLayout() {
         options={{
           title: "Settings",
           tabBarIcon: ({ color, size }) => <Settings color={color} size={size} />,
+        }}
+      />
+      <Tabs.Screen
+        name="camera"
+        options={{
+          href: null,
         }}
       />
     </Tabs>

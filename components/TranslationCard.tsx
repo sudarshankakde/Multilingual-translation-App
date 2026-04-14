@@ -7,8 +7,7 @@ import {
   Platform,
   Animated,
 } from 'react-native';
-import { Copy, Volume2, Share2, VolumeX, Check, Pause, Play, Square } from 'lucide-react-native';
-import * as Haptics from 'expo-haptics';
+import { Copy, Volume2, Share2, VolumeX, Check, Pause, Play, Square, ChevronDown, ChevronUp } from 'lucide-react-native';
 import { Translation } from '@/types/translation';
 import { getLanguageName } from '@/constants/languages';
 import { useTranslation } from '@/hooks/translation-store';
@@ -25,6 +24,7 @@ export default function TranslationCard({
   const { speakText, stopSpeech, pauseSpeech, resumeSpeech, copyToClipboard, shareTranslation, isSpeaking, currentSpeakingText } = useTranslation();
   const [copiedText, setCopiedText] = useState<string>('');
   const [isPaused, setIsPaused] = useState(false);
+  const [showOriginal, setShowOriginal] = useState(false);
   const scaleAnim = useState(new Animated.Value(1))[0];
 
   const isThisTextSpeaking = currentSpeakingText === translation.originalText || currentSpeakingText === translation.translatedText;
@@ -44,9 +44,9 @@ export default function TranslationCard({
     ]).start();
   };
 
-  const handleCopy = async (text: string, type: 'original' | 'translated') => {
+  const handleCopy = async (_text: string, type: 'original' | 'translated') => {
     animateButton();
-    const success = await copyToClipboard(text);
+    const success = await copyToClipboard(translation.translatedText);
     if (success) {
       setCopiedText(type);
       setTimeout(() => setCopiedText(''), 2000);
@@ -108,34 +108,6 @@ export default function TranslationCard({
 
       <View style={styles.textSection}>
         <View style={styles.textContainer}>
-          <Text style={styles.originalText}>{translation.originalText}</Text>
-          <View style={styles.actionButtons}>
-            <TouchableOpacity
-              onPress={() => handleCopy(translation.originalText, 'original')}
-              style={styles.actionButton}
-            >
-              {copiedText === 'original' ? (
-                <Check size={16} color="#34A853" />
-              ) : (
-                <Copy size={16} color="#5F6368" />
-              )}
-            </TouchableOpacity>
-            <TouchableOpacity
-              onPress={() => handleSpeak(translation.originalText, translation.sourceLanguage)}
-              style={[styles.actionButton, isThisTextSpeaking && currentSpeakingText === translation.originalText && styles.actionButtonActive]}
-            >
-              {isThisTextSpeaking && currentSpeakingText === translation.originalText && isSpeaking ? (
-                <VolumeX size={16} color="#4285F4" />
-              ) : (
-                <Volume2 size={16} color={isThisTextSpeaking && currentSpeakingText === translation.originalText ? "#4285F4" : "#5F6368"} />
-              )}
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        <View style={styles.divider} />
-
-        <View style={styles.textContainer}>
           <Text style={styles.translatedText}>{translation.translatedText}</Text>
           <View style={styles.actionButtons}>
             <TouchableOpacity
@@ -158,7 +130,7 @@ export default function TranslationCard({
                 <Volume2 size={16} color={isThisTextSpeaking && currentSpeakingText === translation.translatedText ? "#4285F4" : "#5F6368"} />
               )}
             </TouchableOpacity>
-            {isThisTextSpeaking && isSpeaking && (
+            {Platform.OS === 'ios' && isThisTextSpeaking && isSpeaking && (
               <TouchableOpacity
                 onPress={handlePause}
                 style={styles.actionButton}
@@ -186,6 +158,42 @@ export default function TranslationCard({
             </TouchableOpacity>
           </View>
         </View>
+
+        <TouchableOpacity style={styles.originalToggle} onPress={() => setShowOriginal((prev) => !prev)}>
+          <Text style={styles.originalToggleText}>{showOriginal ? 'Hide Original' : 'Show Original'}</Text>
+          {showOriginal ? <ChevronUp size={16} color="#5F6368" /> : <ChevronDown size={16} color="#5F6368" />}
+        </TouchableOpacity>
+
+        {showOriginal && (
+          <>
+            <View style={styles.divider} />
+            <View style={styles.textContainer}>
+              <Text style={styles.originalText}>{translation.originalText}</Text>
+              <View style={styles.actionButtons}>
+                <TouchableOpacity
+                  onPress={() => handleCopy(translation.originalText, 'original')}
+                  style={styles.actionButton}
+                >
+                  {copiedText === 'original' ? (
+                    <Check size={16} color="#34A853" />
+                  ) : (
+                    <Copy size={16} color="#5F6368" />
+                  )}
+                </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleSpeak(translation.originalText, translation.sourceLanguage)}
+                  style={[styles.actionButton, isThisTextSpeaking && currentSpeakingText === translation.originalText && styles.actionButtonActive]}
+                >
+                  {isThisTextSpeaking && currentSpeakingText === translation.originalText && isSpeaking ? (
+                    <VolumeX size={16} color="#4285F4" />
+                  ) : (
+                    <Volume2 size={16} color={isThisTextSpeaking && currentSpeakingText === translation.originalText ? "#4285F4" : "#5F6368"} />
+                  )}
+                </TouchableOpacity>
+              </View>
+            </View>
+          </>
+        )}
       </View>
     </Animated.View>
   );
@@ -195,7 +203,7 @@ const styles = StyleSheet.create({
   container: {
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    marginHorizontal: 16,
+    marginHorizontal: 2,
     marginVertical: 8,
     shadowColor: '#000',
     shadowOffset: {
@@ -241,11 +249,22 @@ const styles = StyleSheet.create({
   },
   translatedText: {
     flex: 1,
-    fontSize: 16,
+    fontSize: 17,
     color: '#202124',
-    fontWeight: '500',
+    fontWeight: '600',
     lineHeight: 24,
     marginRight: 12,
+  },
+  originalToggle: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  originalToggleText: {
+    fontSize: 13,
+    color: '#5F6368',
+    fontWeight: '500',
   },
   actionButtons: {
     flexDirection: 'row',

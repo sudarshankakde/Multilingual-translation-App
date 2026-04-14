@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   View,
   Text,
@@ -8,20 +8,25 @@ import {
   ActivityIndicator,
   Platform,
   Alert,
+  Modal,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Images, Upload, Camera } from 'lucide-react-native';
+import { Images, Upload, Camera, Languages, X } from 'lucide-react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useTranslation } from '@/hooks/translation-store';
 import TranslationCard from '@/components/TranslationCard';
 import LanguageSelector from '@/components/LanguageSelector';
 import OfflineScreen from '@/components/OfflineScreen';
 import { extractTextFromImageBase64 } from '@/utils/gemini';
+import { getLanguageName } from '@/constants/languages';
 
 export default function GalleryScreen() {
   const [isProcessing, setIsProcessing] = useState(false);
+  const [processingStep, setProcessingStep] = useState('');
   const [lastTranslation, setLastTranslation] = useState<any>(null);
-  const { settings, translateText, addTranslation, updateSettings, isOffline } = useTranslation();
+  const [settingsModalVisible, setSettingsModalVisible] = useState(false);
+  const scrollRef = useRef<ScrollView>(null);
+  const { settings, translateText, addTranslation, updateSettings, isOffline, shouldPromptTargetLanguageChange } = useTranslation();
   const insets = useSafeAreaInsets();
 
   if (isOffline) {
@@ -55,6 +60,7 @@ export default function GalleryScreen() {
 
     setIsProcessing(true);
     try {
+      setProcessingStep('Extracting text from image...');
       console.log('Extracting text from image...');
       const extractedText = await extractTextFromImage(imageUri);
       
@@ -63,9 +69,24 @@ export default function GalleryScreen() {
         return;
       }
 
+      const languageCheck = await shouldPromptTargetLanguageChange(
+        extractedText,
+        settings.sourceLanguage,
+        settings.targetLanguage
+      );
+      if (languageCheck.shouldPrompt) {
+        Alert.alert(
+          'Change Target Language',
+          `Detected source language is ${getLanguageName(languageCheck.detectedLanguage || settings.targetLanguage)}. Please choose a different target language.`
+        );
+        return;
+      }
+
+      setProcessingStep('Translating extracted text...');
       console.log('Translating extracted text...');
       const translatedText = await translateText(extractedText, settings.sourceLanguage, settings.targetLanguage);
 
+      setProcessingStep('Saving translation...');
       const translation = {
         id: Date.now().toString(),
         originalText: extractedText,
@@ -78,10 +99,14 @@ export default function GalleryScreen() {
 
       setLastTranslation(translation);
       addTranslation(translation);
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      });
     } catch (error) {
       console.error('Image processing error:', error instanceof Error ? error.message : 'Failed to process image');
     } finally {
       setIsProcessing(false);
+      setProcessingStep('');
     }
   };
 
@@ -99,7 +124,7 @@ export default function GalleryScreen() {
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         allowsEditing: true,
-        aspect: [4, 3],
+        
         quality: 0.8,
         base64: true,
       });
@@ -127,7 +152,6 @@ export default function GalleryScreen() {
     try {
       const result = await ImagePicker.launchCameraAsync({
         allowsEditing: true,
-        aspect: [4, 3],
         quality: 0.8,
         base64: true,
       });
@@ -141,50 +165,147 @@ export default function GalleryScreen() {
     }
   };
 
+  const retranslateWithNewLanguage = async (newTargetLanguage: string) => {
+    if (isProcessing || !lastTranslation || newTargetLanguage === lastTranslation.targetLanguage) {
+      return;
+    }
+
+    const languageCheck = await shouldPromptTargetLanguageChange(
+      lastTranslation.originalText,
+      lastTranslation.sourceLanguage,
+      newTargetLanguage
+    );
+    if (languageCheck.shouldPrompt) {
+      Alert.alert(
+        'Change Target Language',
+        `Detected source language is ${getLanguageName(languageCheck.detectedLanguage || newTargetLanguage)}. Please choose a different target language.`
+      );
+      return;
+    }
+
+    updateSettings({ targetLanguage: newTargetLanguage });
+    setIsProcessing(true);
+
+    try {
+      const translatedText = await translateText(
+        lastTranslation.originalText,
+        lastTranslation.sourceLanguage,
+        newTargetLanguage
+      );
+
+      const updatedTranslation = {
+        ...lastTranslation,
+        translatedText,
+        targetLanguage: newTargetLanguage,
+        timestamp: Date.now(),
+      };
+
+      setLastTranslation(updatedTranslation);
+      addTranslation({
+        originalText: lastTranslation.originalText,
+        translatedText,
+        sourceLanguage: lastTranslation.sourceLanguage,
+        targetLanguage: newTargetLanguage,
+        type: 'gallery',
+      });
+      requestAnimationFrame(() => {
+        scrollRef.current?.scrollToEnd({ animated: true });
+      });
+    } catch (error) {
+      console.error('Retranslation error:', error instanceof Error ? error.message : 'Retranslation failed');
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
       <View style={styles.header}>
-        <Text style={styles.title}>Gallery Translator</Text>
-        <Text style={styles.subtitle}>Select images to extract and translate text</Text>
+        <View style={styles.headerTopRow}>
+          <View style={styles.headerTextWrap}>
+            <Text style={styles.title}>Gallery Translator</Text>
+            <Text style={styles.subtitle}>Select images to extract and translate text</Text>
+          </View>
+          <TouchableOpacity
+            style={styles.settingsIconButton}
+            onPress={() => !isProcessing && setSettingsModalVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Open translation settings"
+            disabled={isProcessing}
+          >
+            <Languages size={20} color="#4285F4" />
+          </TouchableOpacity>
+        </View>
       </View>
 
-      <ScrollView 
-        style={styles.content} 
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-        keyboardShouldPersistTaps="handled"
+      <TouchableOpacity style={styles.languageSummarySection} onPress={() => !isProcessing && setSettingsModalVisible(true)} activeOpacity={0.85} disabled={isProcessing}>
+        <View style={styles.languageBadge}>
+          <Text style={styles.languageBadgeLabel}>From</Text>
+          <Text style={styles.languageBadgeValue}>{getLanguageName(settings.sourceLanguage)}</Text>
+        </View>
+        <View style={styles.languageArrowWrap}>
+          <Text style={styles.languageArrow}>→</Text>
+        </View>
+        <View style={styles.languageBadge}>
+          <Text style={styles.languageBadgeLabel}>To</Text>
+          <Text style={styles.languageBadgeValue}>{getLanguageName(settings.targetLanguage)}</Text>
+        </View>
+      </TouchableOpacity>
+
+      <Modal
+        visible={settingsModalVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSettingsModalVisible(false)}
       >
-        <View style={styles.languageSection}>
-          <Text style={styles.sectionTitle}>Translation Settings</Text>
-          <View style={styles.languageRow}>
-            <View style={styles.languageItem}>
-              <Text style={styles.languageLabel}>From</Text>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>Translation Settings</Text>
+              <TouchableOpacity onPress={() => setSettingsModalVisible(false)} style={styles.modalCloseButton}>
+                <X size={20} color="#5F6368" />
+              </TouchableOpacity>
+            </View>
+
+            <View style={styles.modalLanguageSection}>
+              <Text style={styles.modalLanguageLabel}>From</Text>
               <LanguageSelector
                 selectedLanguage={settings.sourceLanguage}
                 onLanguageSelect={(code) => updateSettings({ sourceLanguage: code })}
                 placeholder="Auto-detect"
+                disabled={isProcessing}
               />
             </View>
-            <View style={styles.languageItem}>
-              <Text style={styles.languageLabel}>To</Text>
+
+            <View style={styles.modalLanguageSection}>
+              <Text style={styles.modalLanguageLabel}>To</Text>
               <LanguageSelector
                 selectedLanguage={settings.targetLanguage}
                 onLanguageSelect={(code) => updateSettings({ targetLanguage: code })}
                 placeholder="Select language"
                 excludeAuto
+                disabled={isProcessing}
               />
             </View>
           </View>
         </View>
+      </Modal>
 
-        <View style={styles.actionsSection}>
+      <ScrollView 
+        ref={scrollRef}
+        style={styles.content} 
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={[styles.actionsSection, Platform.OS !== 'web' && styles.actionsSectionRow]}>
           <View style={styles.actionCard}>
             <View style={styles.actionIcon}>
-              <Images size={48} color="#4285F4" />
+              <Images size={32} color="#4285F4" />
             </View>
-            <Text style={styles.actionTitle}>Select from Gallery</Text>
+            <Text style={styles.actionTitle}>Gallery</Text>
             <Text style={styles.actionDescription}>
-              Choose an existing image from your photo library
+              Pick photo
             </Text>
             <TouchableOpacity
               style={[styles.actionButton, (isProcessing || settings.targetLanguage === 'auto' || isOffline) && styles.actionButtonDisabled]}
@@ -197,7 +318,7 @@ export default function GalleryScreen() {
                 <>
                   <Upload size={20} color="#FFFFFF" />
                   <Text style={styles.actionButtonText}>
-                    {isOffline ? 'Offline - Unavailable' : 'Select Image'}
+                    {isOffline ? 'Offline' : 'Select'}
                   </Text>
                 </>
               )}
@@ -207,11 +328,11 @@ export default function GalleryScreen() {
           {Platform.OS !== 'web' && (
             <View style={styles.actionCard}>
               <View style={styles.actionIcon}>
-                <Camera size={48} color="#34A853" />
+                <Camera size={32} color="#34A853" />
               </View>
-              <Text style={styles.actionTitle}>Take Photo</Text>
+              <Text style={styles.actionTitle}>Camera</Text>
               <Text style={styles.actionDescription}>
-                Capture a new photo with text to translate
+                Capture text
               </Text>
               <TouchableOpacity
                 style={[styles.actionButton, styles.actionButtonSecondary, (isProcessing || settings.targetLanguage === 'auto' || isOffline) && styles.actionButtonDisabled]}
@@ -224,7 +345,7 @@ export default function GalleryScreen() {
                   <>
                     <Camera size={20} color="#FFFFFF" />
                     <Text style={styles.actionButtonText}>
-                      {isOffline ? 'Offline - Unavailable' : 'Take Photo'}
+                      {isOffline ? 'Offline' : 'Capture'}
                     </Text>
                   </>
                 )}
@@ -232,6 +353,13 @@ export default function GalleryScreen() {
             </View>
           )}
         </View>
+
+        {isProcessing && (
+          <View style={styles.processingBanner}>
+            <ActivityIndicator size="small" color="#4285F4" />
+            <Text style={styles.processingBannerText}>{processingStep || 'Processing image...'}</Text>
+          </View>
+        )}
 
         {settings.targetLanguage === 'auto' && !isOffline && (
           <View style={styles.warningSection}>
@@ -252,20 +380,26 @@ export default function GalleryScreen() {
         {lastTranslation && (
           <View style={styles.resultSection}>
             <Text style={styles.sectionTitle}>Translation Result</Text>
+            <View style={styles.resultLanguageSection}>
+              <Text style={styles.resultLanguageLabel}>Change Output Language</Text>
+              <LanguageSelector
+                selectedLanguage={lastTranslation.targetLanguage}
+                onLanguageSelect={retranslateWithNewLanguage}
+                placeholder="Select language"
+                excludeAuto
+                disabled={isProcessing}
+              />
+            </View>
             <TranslationCard translation={lastTranslation} />
           </View>
         )}
-
-        <View style={styles.infoSection}>
+  {
+          !lastTranslation  &&( <View style={styles.infoSection}>
           <Text style={styles.infoTitle}>Supported Features</Text>
           <View style={styles.featureList}>
             <View style={styles.featureItem}>
               <Text style={styles.featureBullet}>•</Text>
               <Text style={styles.featureText}>Extract text from any image format</Text>
-            </View>
-            <View style={styles.featureItem}>
-              <Text style={styles.featureBullet}>•</Text>
-              <Text style={styles.featureText}>Translate to 100+ languages</Text>
             </View>
             <View style={styles.featureItem}>
               <Text style={styles.featureBullet}>•</Text>
@@ -276,7 +410,9 @@ export default function GalleryScreen() {
               <Text style={styles.featureText}>Text-to-speech for translations</Text>
             </View>
           </View>
-        </View>
+        </View>)
+  }
+       
       </ScrollView>
     </View>
   );
@@ -294,6 +430,23 @@ const styles = StyleSheet.create({
     borderBottomWidth: 1,
     borderBottomColor: '#E8EAED',
   },
+  headerTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+  },
+  headerTextWrap: {
+    flex: 1,
+  },
+  settingsIconButton: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: '#E8F0FE',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   title: {
     fontSize: 24,
     fontWeight: '600',
@@ -310,33 +463,97 @@ const styles = StyleSheet.create({
   scrollContent: {
     paddingBottom: 20,
   },
-  languageSection: {
-    backgroundColor: '#FFFFFF',
-    marginTop: 16,
+  languageSummarySection: {
+    marginTop: 12,
     marginHorizontal: 16,
-    borderRadius: 12,
-    padding: 20,
-    shadowColor: '#000',
-    shadowOffset: {
-      width: 0,
-      height: 2,
-    },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-  },
-  languageRow: {
     flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  languageBadge: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderWidth: 1,
+    borderColor: '#E8EAED',
+  },
+  languageBadgeLabel: {
+    fontSize: 11,
+    color: '#5F6368',
+    marginBottom: 2,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  languageBadgeValue: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#202124',
+  },
+  languageArrowWrap: {
+    width: 22,
+    alignItems: 'center',
+  },
+  languageArrow: {
+    fontSize: 16,
+    color: '#5F6368',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.35)',
+    justifyContent: 'center',
+    paddingHorizontal: 20,
+  },
+  modalCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 16,
+    padding: 20,
     gap: 16,
   },
-  languageItem: {
-    flex: 1,
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
-  languageLabel: {
+  modalTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#202124',
+  },
+  modalCloseButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#F1F3F4',
+  },
+  modalLanguageSection: {
+    gap: 8,
+  },
+  modalLanguageLabel: {
     fontSize: 14,
     fontWeight: '500',
     color: '#5F6368',
-    marginBottom: 8,
+  },
+  processingBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    marginHorizontal: 16,
+    marginTop: 8,
+    marginBottom: 4,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    borderRadius: 10,
+    backgroundColor: '#E8F0FE',
+  },
+  processingBannerText: {
+    flex: 1,
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#202124',
   },
   sectionTitle: {
     fontSize: 18,
@@ -349,10 +566,16 @@ const styles = StyleSheet.create({
     marginHorizontal: 16,
     gap: 16,
   },
+  actionsSectionRow: {
+    flexDirection: 'row',
+    alignItems: 'stretch',
+  },
   actionCard: {
+    flex: 1,
     backgroundColor: '#FFFFFF',
     borderRadius: 12,
-    padding: 24,
+    paddingHorizontal: 12,
+    paddingVertical: 14,
     alignItems: 'center',
     shadowColor: '#000',
     shadowOffset: {
@@ -364,35 +587,35 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   actionIcon: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
+    width: 56,
+    height: 56,
+    borderRadius: 28,
     backgroundColor: '#E8F0FE',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 10,
   },
   actionTitle: {
-    fontSize: 18,
+    fontSize: 15,
     fontWeight: '600',
     color: '#202124',
-    marginBottom: 8,
+    marginBottom: 4,
   },
   actionDescription: {
-    fontSize: 14,
+    fontSize: 12,
     color: '#5F6368',
     textAlign: 'center',
-    lineHeight: 20,
-    marginBottom: 20,
+    lineHeight: 16,
+    marginBottom: 12,
   },
   actionButton: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#4285F4',
-    paddingHorizontal: 24,
-    paddingVertical: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 9,
     borderRadius: 8,
-    gap: 8,
+    gap: 6,
   },
   actionButtonSecondary: {
     backgroundColor: '#34A853',
@@ -402,7 +625,7 @@ const styles = StyleSheet.create({
   },
   actionButtonText: {
     color: '#FFFFFF',
-    fontSize: 16,
+    fontSize: 13,
     fontWeight: '600',
   },
   warningSection: {
@@ -418,6 +641,26 @@ const styles = StyleSheet.create({
   },
   resultSection: {
     margin: 16,
+  },
+  resultLanguageSection: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    gap: 8,
+    shadowColor: '#000',
+    shadowOffset: {
+      width: 0,
+      height: 2,
+    },
+    shadowOpacity: 0.08,
+    shadowRadius: 4,
+    elevation: 2,
+  },
+  resultLanguageLabel: {
+    fontSize: 13,
+    color: '#5F6368',
+    fontWeight: '500',
   },
   infoSection: {
     margin: 16,
