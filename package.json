@@ -11,7 +11,8 @@
     "build": "eas build --platform android",
     "build:ios": "eas build --platform ios",
     "build:all": "eas build --platform all",
-    "clean": "expo start --clear"
+    "clean": "expo start --clear",
+    "lint": "expo lint"
   },
   "dependencies": {
     "@expo/vector-icons": "^15.1.1",
