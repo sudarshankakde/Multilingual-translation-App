@@ -83,10 +83,10 @@ function getBestAvailableKey(excluded: Set<string>): ApiKeyState | null {
   const candidates = apiKeys.filter((k) => !excluded.has(k.key));
   if (!candidates.length) return null;
 
-  const available = candidates
+  const availableKeys = candidates
     .filter((k) => !k.cooldownUntil || k.cooldownUntil <= now)
     .sort((a, b) => a.failures - b.failures);
-  if (available.length) return available[0];
+  if (availableKeys.length) return availableKeys[0];
 
   return null;
 }
@@ -131,6 +131,7 @@ function markSuccess(keyObj: ApiKeyState) {
 }
 
 function maskApiKey(key: string) {
+  if (!key) return '****';
   if (key.length <= 4) return '****';
   if (key.length <= 8) return `${key.slice(0, 2)}...${key.slice(-2)}`;
   return `${key.slice(0, 4)}...${key.slice(-4)}`;
@@ -259,7 +260,7 @@ export async function extractTextFromMedia(params: {
   if (allNotFoundModels.length && !hasNonModelNotFoundError) {
     // Attempt to list available models for clearer diagnostics
     try {
-      const diagnosticKey = apiKeys[0]?.key;
+      const diagnosticKey = getBestAvailableKey(new Set<string>())?.key || apiKeys[0]?.key;
       const available = diagnosticKey ? await listModels(diagnosticKey) : [];
       const availableNames = (available || []).map((m: any) => m.name).join(', ') || 'None returned';
       throw new Error(
