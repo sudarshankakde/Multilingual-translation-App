@@ -151,10 +151,16 @@ The `--clear` flag rebuilds Metro caches ensuring new env vars propagate.
 ## Minimum Required Variables
 
 ```bash
+EXPO_PUBLIC_GEMINI_API_KEYS=AIzaSyKey1,AIzaSyKey2
+```
+
+Single-key fallback is also supported:
+
+```bash
 EXPO_PUBLIC_GEMINI_API_KEY=AIzaSyC_actual_key
 ```
 
-No other Gemini env vars are required presently; model selection is dynamic.
+When multiple keys are set, the app rotates keys on failure/rate-limit and retries models automatically.
 
 ## Security Reminder
 
