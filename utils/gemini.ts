@@ -11,6 +11,7 @@ interface GeminiRequest { contents: GeminiContent[] }
 // We no longer include legacy 1.5/1.0 names since account lists only 2.x variants.
 const STATIC_PREFERRED_MODELS = [
   'gemini-2.5-flash',
+  'gemini-3.1-flash-lite',
   'gemini-flash-latest',
   'gemini-2.5-pro',
   'gemini-pro-latest',
