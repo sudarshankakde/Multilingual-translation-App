@@ -36,8 +36,8 @@ type ApiKeyState = {
   cooldownUntil?: number;
 };
 
-const SINGLE_KEY = String(process.env.EXPO_PUBLIC_GEMINI_API_KEY || '').trim();
-const MULTI_KEYS = String(process.env.EXPO_PUBLIC_GEMINI_API_KEYS || '')
+const SINGLE_KEY = (process.env.EXPO_PUBLIC_GEMINI_API_KEY ?? '').trim();
+const MULTI_KEYS = (process.env.EXPO_PUBLIC_GEMINI_API_KEYS ?? '')
   .split(',')
   .map((k: string) => k.trim())
   .filter(Boolean);
@@ -82,7 +82,7 @@ function getBestAvailableKey(excluded: Set<string>): ApiKeyState | null {
     .sort((a, b) => a.failures - b.failures);
   if (available.length) return available[0];
 
-  return candidates.sort((a, b) => (a.cooldownUntil || Infinity) - (b.cooldownUntil || Infinity))[0];
+  return null;
 }
 
 function markFailure(keyObj: ApiKeyState, status: GeminiRetryableErrorCode) {
@@ -146,10 +146,14 @@ export async function extractTextFromMedia(params: {
   let attempt = 0;
   const triedKeys = new Set<string>();
   const allNotFoundModels: string[] = [];
+  let hasNonModelNotFoundError = false;
 
   while (triedKeys.size < apiKeys.length) {
     const keyObj = getBestAvailableKey(triedKeys);
-    if (!keyObj) break;
+    if (!keyObj) {
+      lastError = new Error('All configured Gemini API keys are in cooldown. Please wait and retry.');
+      break;
+    }
     triedKeys.add(keyObj.key);
 
     // Fetch available models per key for dynamic filtering (ignore failures silently)
@@ -170,7 +174,7 @@ export async function extractTextFromMedia(params: {
       ...(!dynamicModels.length ? STATIC_PREFERRED_MODELS : [])
     ].filter((v, i, arr) => arr.indexOf(v) === i);
 
-    let keyOnlyModelNotFound = true;
+    let onlyModelNotFoundErrors = true;
 
     for (const model of fallbackSequence) {
       attempt += 1;
@@ -193,7 +197,8 @@ export async function extractTextFromMedia(params: {
             continue;
           }
 
-          keyOnlyModelNotFound = false;
+          onlyModelNotFoundErrors = false;
+          hasNonModelNotFoundError = true;
           markFailure(keyObj, status);
 
           if (status === 'API_KEY_INVALID') {
@@ -213,20 +218,21 @@ export async function extractTextFromMedia(params: {
         markSuccess(keyObj);
         return { text, modelTried: model, apiKeyUsed: maskApiKey(keyObj.key), attempts: attempt };
       } catch (err) {
-        keyOnlyModelNotFound = false;
+        onlyModelNotFoundErrors = false;
+        hasNonModelNotFoundError = true;
         markFailure(keyObj, 'UNKNOWN');
         lastError = err instanceof Error ? err : new Error('Unknown Gemini error');
         break;
       }
     }
 
-    if (keyOnlyModelNotFound) {
+    if (onlyModelNotFoundErrors) {
       markFailure(keyObj, 'MODEL_NOT_FOUND');
     }
   }
 
   // All attempts exhausted
-  if (allNotFoundModels.length && allNotFoundModels.length === attempt) {
+  if (allNotFoundModels.length && !hasNonModelNotFoundError) {
     // Attempt to list available models for clearer diagnostics
     try {
       const available = await listModels(apiKeys[0].key);
