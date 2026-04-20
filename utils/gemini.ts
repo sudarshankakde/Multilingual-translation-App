@@ -105,6 +105,7 @@ function markFailure(keyObj: ApiKeyState, status: GeminiRetryableErrorCode) {
   keyObj.failures += 1;
 
   if (status === 'API_KEY_INVALID') {
+    // Permanently exclude invalid keys from this app runtime.
     keyObj.cooldownUntil = Infinity;
     return;
   }
@@ -130,7 +131,8 @@ function markSuccess(keyObj: ApiKeyState) {
 }
 
 function maskApiKey(key: string) {
-  if (key.length <= 8) return key;
+  if (key.length <= 4) return '****';
+  if (key.length <= 8) return `${key.slice(0, 2)}...${key.slice(-2)}`;
   return `${key.slice(0, 4)}...${key.slice(-4)}`;
 }
 
@@ -172,7 +174,7 @@ export async function extractTextFromMedia(params: {
       lastError = new Error(
         waitSeconds
           ? `All configured Gemini API keys are in cooldown. Retry in about ${waitSeconds}s.`
-          : 'All configured Gemini API keys are in cooldown. Please wait and retry.'
+          : 'All configured Gemini API keys are currently unavailable (cooldown or invalid). Please rotate keys or retry later.'
       );
       break;
     }
