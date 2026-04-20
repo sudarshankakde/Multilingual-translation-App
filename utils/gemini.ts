@@ -36,10 +36,10 @@ type ApiKeyState = {
   cooldownUntil?: number;
 };
 
-const SINGLE_KEY = (process.env.EXPO_PUBLIC_GEMINI_API_KEY || '').trim();
-const MULTI_KEYS = (process.env.EXPO_PUBLIC_GEMINI_API_KEYS || '')
+const SINGLE_KEY = String(process.env.EXPO_PUBLIC_GEMINI_API_KEY || '').trim();
+const MULTI_KEYS = String(process.env.EXPO_PUBLIC_GEMINI_API_KEYS || '')
   .split(',')
-  .map((k) => k.trim())
+  .map((k: string) => k.trim())
   .filter(Boolean);
 
 const ALL_CONFIGURED_KEYS = [...MULTI_KEYS, ...(SINGLE_KEY ? [SINGLE_KEY] : [])]
