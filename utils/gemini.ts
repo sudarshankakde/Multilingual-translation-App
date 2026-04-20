@@ -42,14 +42,19 @@ const MULTI_KEYS = (process.env.EXPO_PUBLIC_GEMINI_API_KEYS ?? '')
   .map((k: string) => k.trim())
   .filter(Boolean);
 
-const ALL_CONFIGURED_KEYS = [...MULTI_KEYS, ...(SINGLE_KEY ? [SINGLE_KEY] : [])]
+const allConfiguredKeys = [...MULTI_KEYS, ...(SINGLE_KEY ? [SINGLE_KEY] : [])]
   .filter((key) => key !== 'YOUR_API_KEY_HERE')
   .filter((v, i, arr) => arr.indexOf(v) === i);
 
-const apiKeys: ApiKeyState[] = ALL_CONFIGURED_KEYS.map((key) => ({
+const apiKeys: ApiKeyState[] = allConfiguredKeys.map((key) => ({
   key,
   failures: 0
 }));
+
+const COOLDOWN_PERMISSION_DENIED_MS = 5 * 60_000;
+const COOLDOWN_RATE_LIMIT_MS = 60_000;
+const COOLDOWN_MODEL_NOT_FOUND_MS = 30_000;
+const COOLDOWN_UNKNOWN_MS = 15_000;
 
 function buildRequest(prompt: string, mimeType: string, base64: string): GeminiRequest {
   return {
@@ -85,6 +90,16 @@ function getBestAvailableKey(excluded: Set<string>): ApiKeyState | null {
   return null;
 }
 
+function getShortestRemainingCooldownMs(excluded: Set<string>): number | null {
+  const now = Date.now();
+  const remaining = apiKeys
+    .filter((k) => !excluded.has(k.key))
+    .map((k) => (k.cooldownUntil || 0) - now)
+    .filter((ms) => ms > 0);
+  if (!remaining.length) return null;
+  return Math.min(...remaining);
+}
+
 function markFailure(keyObj: ApiKeyState, status: GeminiRetryableErrorCode) {
   keyObj.failures += 1;
 
@@ -93,19 +108,19 @@ function markFailure(keyObj: ApiKeyState, status: GeminiRetryableErrorCode) {
     return;
   }
   if (status === 'PERMISSION_DENIED') {
-    keyObj.cooldownUntil = Date.now() + 5 * 60_000;
+    keyObj.cooldownUntil = Date.now() + COOLDOWN_PERMISSION_DENIED_MS;
     return;
   }
   if (status === 'RATE_LIMIT') {
-    keyObj.cooldownUntil = Date.now() + 60_000;
+    keyObj.cooldownUntil = Date.now() + COOLDOWN_RATE_LIMIT_MS;
     return;
   }
   if (status === 'MODEL_NOT_FOUND') {
-    keyObj.cooldownUntil = Date.now() + 30_000;
+    keyObj.cooldownUntil = Date.now() + COOLDOWN_MODEL_NOT_FOUND_MS;
     return;
   }
 
-  keyObj.cooldownUntil = Date.now() + 15_000;
+  keyObj.cooldownUntil = Date.now() + COOLDOWN_UNKNOWN_MS;
 }
 
 function markSuccess(keyObj: ApiKeyState) {
@@ -151,7 +166,13 @@ export async function extractTextFromMedia(params: {
   while (triedKeys.size < apiKeys.length) {
     const keyObj = getBestAvailableKey(triedKeys);
     if (!keyObj) {
-      lastError = new Error('All configured Gemini API keys are in cooldown. Please wait and retry.');
+      const shortestMs = getShortestRemainingCooldownMs(triedKeys);
+      const waitSeconds = shortestMs ? Math.ceil(shortestMs / 1000) : null;
+      lastError = new Error(
+        waitSeconds
+          ? `All configured Gemini API keys are in cooldown. Retry in about ${waitSeconds}s.`
+          : 'All configured Gemini API keys are in cooldown. Please wait and retry.'
+      );
       break;
     }
     triedKeys.add(keyObj.key);
@@ -235,7 +256,8 @@ export async function extractTextFromMedia(params: {
   if (allNotFoundModels.length && !hasNonModelNotFoundError) {
     // Attempt to list available models for clearer diagnostics
     try {
-      const available = await listModels(apiKeys[0].key);
+      const diagnosticKey = apiKeys[0]?.key;
+      const available = diagnosticKey ? await listModels(diagnosticKey) : [];
       const availableNames = (available || []).map((m: any) => m.name).join(', ') || 'None returned';
       throw new Error(
         `None of the fallback models were found (404): ${allNotFoundModels.join(', ')}. ` +
